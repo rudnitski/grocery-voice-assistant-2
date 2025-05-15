@@ -122,6 +122,42 @@ export const parseJsonResponse = (jsonString: string): any => {
 };
 
 /**
+ * Transcribe audio using OpenAI's API
+ * @param audioBlob - The audio blob to transcribe
+ * @returns The transcribed text
+ */
+export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
+  try {
+    logger.info('Preparing to transcribe audio');
+    
+    // Create a FormData object to send the audio file
+    const formData = new FormData();
+    formData.append('file', audioBlob, 'recording.webm');
+    formData.append('model', 'gpt-4o-mini');
+    
+    // Send the request to the API endpoint
+    const response = await fetch('/api/transcribe', {
+      method: 'POST',
+      body: formData,
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      logger.error('Transcription API error', { status: response.status, error: errorText });
+      throw new Error(`Transcription API error: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    logger.info('Transcription completed successfully');
+    
+    return data.text || '';
+  } catch (error) {
+    logger.error('Error transcribing audio', error);
+    throw error;
+  }
+};
+
+/**
  * Process a transcript to extract grocery items
  * This is a client-side friendly version that calls the API endpoint
  * @param transcript - The transcript to process

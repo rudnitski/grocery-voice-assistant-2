@@ -18,25 +18,28 @@ const logger = {
 const GROCERY_EXTRACTION_PROMPT = `
 You are a data extraction assistant for a grocery shopping app.
 
-Your task: Extract only real grocery items (food, beverages, common household goods) and their quantities from the transcript below.
+Your task: Extract only real grocery items (food, beverages, common household goods) and their quantities from the transcript below. The transcript may be in any language - do NOT translate the items, keep them in the original language.
 
 Instructions:
 - Output a valid JSON ARRAY of objects.
 - Each object must have exactly two properties:
-  - "item": the name of the grocery item in singular form (string).
-  - "quantity": the amount, either a number or a descriptive string (e.g., "1", "1 liter").
-- Only include things people actually buy in a grocery store (e.g., milk, apples, chicken, eggs, rice, cereal, bread, shampoo, toilet paper, juice, yogurt, etc.).
-- Ignore words, numbers, or phrases that are not typical grocery items, such as "one", "three", "to", "something", "etc.".
+  - "item": the name of the grocery item in singular form (string) in the ORIGINAL LANGUAGE.
+  - "quantity": the amount, either a number or a descriptive string (e.g., "1", "1 liter", "500 грамм").
+- Only include things people actually buy in a grocery store.
+- Ignore words, numbers, or phrases that are not typical grocery items.
 - Do NOT include objects that are not real groceries or household goods.
+- DO NOT translate the items to English - keep them in the original language of the transcript.
 
 Rules:
 - Respond with JSON array ONLY. No explanations or extra text.
 - If the transcript does not specify a quantity, assume "1".
-- Convert plural item names to singular (e.g. "bananas" → "banana").
+- Convert plural item names to singular form when possible.
 - If your response must be empty, respond with an empty array [].
 
-Example valid items: "milk", "eggs", "toilet paper", "chicken breast", "bananas", "cereal", "apples", "orange juice", "shampoo", "rice", "pasta".
-Example invalid: "one", "three", "something", "buy", "to", "list", "etc."
+Example valid items in different languages:
+English: "milk", "eggs", "toilet paper", "chicken breast"
+Russian: "молоко", "яйца", "туалетная бумага", "куриная грудка"
+Spanish: "leche", "huevos", "papel higiénico", "pechuga de pollo"
 `;
 
 /**
