@@ -37,56 +37,59 @@ export async function POST(request: NextRequest) {
       model: model
     });
     
-    // Get the audio data as a Buffer
-    const bytes = await audioFile.arrayBuffer();
-    const buffer = Buffer.from(bytes);
-    
-    // For OpenAI API in Node.js environment, we need to use a different approach
-    // Create a proper file object for the OpenAI API
-    const apiFormData = new FormData();
-    
-    // Create a proper File object that OpenAI API expects
-    const file = new File([buffer], 'audio.webm', { type: audioFile.type });
-    apiFormData.append('file', file);
-    apiFormData.append('model', 'whisper-1');
-    apiFormData.append('response_format', 'json');
-    
-    // Make a direct fetch request to the OpenAI API
-    const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
-      },
-      body: apiFormData,
-    });
-    
-    if (!response.ok) {
-      let errorDetails = 'Unknown error';
-      try {
-        // Try to parse the error as JSON first
-        const errorJson = await response.json();
-        errorDetails = JSON.stringify(errorJson);
-        logger.error('OpenAI API error', { status: response.status, error: errorJson });
-      } catch (e) {
-        // If not JSON, get as text
-        const errorText = await response.text();
-        errorDetails = errorText;
-        logger.error('OpenAI API error', { status: response.status, error: errorText });
+    try {
+      // Get the OpenAI API key from environment variables
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) {
+        throw new Error('OpenAI API key is not configured');
       }
       
-      // Return a more detailed error response to the client
+      // Get the audio data
+      const audioBytes = await audioFile.arrayBuffer();
+      
+      // Create a FormData object to send directly to OpenAI API
+      const formData = new FormData();
+      formData.append('file', new Blob([audioBytes]), 'audio.webm');
+      formData.append('model', 'whisper-1');
+      formData.append('response_format', 'json');
+      
+      // Make a direct fetch request to the OpenAI API
+      const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: formData
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.text();
+        throw new Error(`OpenAI API error: ${response.status} - ${errorData}`);
+      }
+      
+      const transcription = await response.json();
+      
+      logger.info('Transcription completed successfully');
+      
+      // Return the transcription
+      return NextResponse.json({ text: transcription.text });
+    } catch (openaiError: any) {
+      // Log the detailed error
+      logger.error('OpenAI API error', { 
+        error: openaiError, 
+        message: openaiError.message,
+        response: openaiError.response?.data
+      });
+      
+      // Return a detailed error response
       return NextResponse.json({ 
         error: 'Transcription failed', 
-        details: `OpenAI API error: ${response.status}`, 
-        apiResponse: errorDetails 
+        details: openaiError.message,
+        apiResponse: openaiError.response?.data || 'No additional details'
       }, { status: 500 });
     }
     
-    const transcription = await response.json();
-    logger.info('Transcription completed successfully');
-    
-    // Return the transcription
-    return NextResponse.json({ text: transcription.text });
+    // This section is replaced by the try/catch block above
   } catch (error) {
     logger.error('Error transcribing audio', error);
     
