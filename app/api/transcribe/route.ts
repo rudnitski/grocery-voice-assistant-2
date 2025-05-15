@@ -21,12 +21,12 @@ export async function POST(request: NextRequest) {
     const openai = getOpenAIClient();
     
     // Get the form data from the request
-    const formData = await request.formData();
-    const audioFile = formData.get('file') as File;
-    const model = formData.get('model') as string || 'gpt-4o-mini';
+    const requestFormData = await request.formData();
+    const audioFile = requestFormData.get('file') as File;
+    const model = requestFormData.get('model') as string || 'gpt-4o-mini';
     
     if (!audioFile) {
-      logger.error('No audio file provided', { formData });
+      logger.error('No audio file provided', { requestFormData });
       return NextResponse.json({ error: 'No audio file provided' }, { status: 400 });
     }
     
@@ -37,43 +37,56 @@ export async function POST(request: NextRequest) {
       model: model
     });
     
-    // Create a File object that OpenAI can accept
+    // Get the audio data as a Buffer
     const bytes = await audioFile.arrayBuffer();
     const buffer = Buffer.from(bytes);
     
-    // Create a temporary file path
-    const fs = require('fs');
-    const os = require('os');
-    const path = require('path');
-    const tempFilePath = path.join(os.tmpdir(), `recording-${Date.now()}.webm`);
+    // For OpenAI API in Node.js environment, we need to use a different approach
+    // Create a proper file object for the OpenAI API
+    const apiFormData = new FormData();
     
-    // Write the buffer to a temporary file
-    fs.writeFileSync(tempFilePath, buffer);
+    // Create a proper File object that OpenAI API expects
+    const file = new File([buffer], 'audio.webm', { type: audioFile.type });
+    apiFormData.append('file', file);
+    apiFormData.append('model', 'whisper-1');
+    apiFormData.append('response_format', 'json');
     
-    try {
-      // Call the OpenAI transcription API with the file path
-      const transcription = await openai.audio.transcriptions.create({
-        file: fs.createReadStream(tempFilePath),
-        model: "whisper-1", // OpenAI's transcription model
-        // No language specified to allow automatic language detection
-        response_format: "json",
-      });
-      
-      logger.info('Transcription completed successfully');
-      
-      // Return the transcription
-      return NextResponse.json({ text: transcription.text });
-    } finally {
-      // Clean up the temporary file
+    // Make a direct fetch request to the OpenAI API
+    const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
+      },
+      body: apiFormData,
+    });
+    
+    if (!response.ok) {
+      let errorDetails = 'Unknown error';
       try {
-        if (fs.existsSync(tempFilePath)) {
-          fs.unlinkSync(tempFilePath);
-          logger.info(`Temporary file ${tempFilePath} deleted`);
-        }
-      } catch (cleanupError) {
-        logger.error('Error cleaning up temporary file', cleanupError);
+        // Try to parse the error as JSON first
+        const errorJson = await response.json();
+        errorDetails = JSON.stringify(errorJson);
+        logger.error('OpenAI API error', { status: response.status, error: errorJson });
+      } catch (e) {
+        // If not JSON, get as text
+        const errorText = await response.text();
+        errorDetails = errorText;
+        logger.error('OpenAI API error', { status: response.status, error: errorText });
       }
+      
+      // Return a more detailed error response to the client
+      return NextResponse.json({ 
+        error: 'Transcription failed', 
+        details: `OpenAI API error: ${response.status}`, 
+        apiResponse: errorDetails 
+      }, { status: 500 });
     }
+    
+    const transcription = await response.json();
+    logger.info('Transcription completed successfully');
+    
+    // Return the transcription
+    return NextResponse.json({ text: transcription.text });
   } catch (error) {
     logger.error('Error transcribing audio', error);
     
