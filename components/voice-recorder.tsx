@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { useState, useRef, useEffect } from "react"
-import { Mic, Square } from "lucide-react"
+import { Mic, Square, Loader2 } from "lucide-react"
 import TranscriptPanel from "./transcript-panel"
 import GroceryList from "./grocery-list"
 import { mockTranscript, mockGroceryItems } from "@/lib/mock-data"
@@ -14,26 +14,65 @@ interface AudioRecorderState {
   audioBlob: Blob | null;
   mediaRecorder: MediaRecorder | null;
   audioChunks: Blob[];
+  streamingMode: boolean;
 }
+
+// Feature detection for browser capabilities
+const detectFeatures = () => {
+  // Check if MediaRecorder is supported and what formats it handles
+  const supportsMediaRecorder = !!(typeof window !== 'undefined' && 
+    navigator.mediaDevices &&
+    window.MediaRecorder &&
+    (MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ||
+     MediaRecorder.isTypeSupported('audio/mp4'))
+  );
+
+  // Check if WebSockets are supported for realtime API
+  const supportsRealtime = !!(typeof window !== 'undefined' && window.WebSocket);
+
+  // Determine preferred MIME type based on browser support
+  let preferredMimeType = '';
+  if (typeof window !== 'undefined' && window.MediaRecorder) {
+    if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+      preferredMimeType = 'audio/webm;codecs=opus';
+    } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+      preferredMimeType = 'audio/mp4';
+    } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+      preferredMimeType = 'audio/webm';
+    }
+  }
+
+  return { supportsMediaRecorder, supportsRealtime, preferredMimeType };
+};
 
 export default function VoiceRecorder() {
   const [isRecording, setIsRecording] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
   const [transcript, setTranscript] = useState("")
+  const [interimTranscript, setInterimTranscript] = useState("")
   const [groceryItems, setGroceryItems] = useState<Array<{ id: string; name: string; quantity: number }>>([])  
   const [useMockData, setUseMockData] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  
+  // Feature detection state
+  const [browserFeatures, setBrowserFeatures] = useState({
+    supportsMediaRecorder: false,
+    supportsRealtime: false,
+    preferredMimeType: ''
+  });
   
   // Audio recording state
   const [audioState, setAudioState] = useState<AudioRecorderState>({
     recording: false,
     audioBlob: null,
     mediaRecorder: null,
-    audioChunks: []
+    audioChunks: [],
+    streamingMode: false
   })
   
-  // Stream reference
+  // Stream reference and socket reference
   const streamRef = useRef<MediaStream | null>(null)
+  const socketRef = useRef<WebSocket | null>(null)
 
   // Process transcript to extract grocery items using our service
   const processTranscript = async (text: string) => {
@@ -65,35 +104,44 @@ export default function VoiceRecorder() {
     }
   }
 
-  // Clean up media stream when component unmounts
+  // Initialize feature detection on mount
+  useEffect(() => {
+    const features = detectFeatures();
+    setBrowserFeatures(features);
+    console.log('Browser feature detection:', features);
+  }, []);
+  
+  // Clean up resources when component unmounts
   useEffect(() => {
     return () => {
+      // Stop any active stream
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop())
         streamRef.current = null
       }
+      
+      // Close any open WebSocket connection
+      if (socketRef.current) {
+        socketRef.current.close()
+        socketRef.current = null
+      }
     }
   }, [])
 
-  const startRecording = async () => {
-    // Clear any previous error messages and data
-    setErrorMessage(null)
-    setTranscript("")
-    setGroceryItems([])
-    
-    // If using mock data, don't start real recording
-    if (useMockData) {
-      setIsRecording(true)
-      return
-    }
-    
+  // Start Whisper-based recording (file upload approach)
+  const startWhisperRecording = async () => {
     try {
       // Request microphone permission
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       streamRef.current = stream
       
-      // Create a new MediaRecorder instance
-      const mediaRecorder = new MediaRecorder(stream)
+      // Use the preferred MIME type detected for this browser
+      const mimeType = browserFeatures.preferredMimeType || 'audio/webm'
+      
+      // Create a new MediaRecorder instance with the preferred format
+      const mediaRecorder = new MediaRecorder(stream, 
+        mimeType ? { mimeType } : undefined
+      )
       const audioChunks: Blob[] = []
       
       // Set up event handlers
@@ -104,69 +152,241 @@ export default function VoiceRecorder() {
       }
       
       mediaRecorder.onstop = async () => {
-        // Create a blob from the audio chunks
-        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' })
+        // Create a blob from the audio chunks with the correct MIME type
+        const audioBlob = new Blob(audioChunks, { type: mimeType })
         
         // Update state with the recorded audio
         setAudioState(prev => ({
           ...prev,
           recording: false,
           audioBlob,
-          audioChunks: []
+          audioChunks: [],
+          streamingMode: false
         }))
         
-        // Process the audio
+        // Process the audio using Whisper API
         await processRecordedAudio(audioBlob)
       }
       
-      // Start recording
-      mediaRecorder.start()
+      // Request data every 300ms for WebKit browsers that need smaller chunks
+      const timeslice = mimeType.includes('mp4') ? 300 : undefined
+      mediaRecorder.start(timeslice)
       
       // Update state
       setAudioState({
         recording: true,
         audioBlob: null,
         mediaRecorder,
-        audioChunks
+        audioChunks,
+        streamingMode: false
       })
       
       setIsRecording(true)
+      console.log(`Started recording using Whisper approach with format: ${mimeType}`)
     } catch (error) {
-      console.error("Error starting audio recording:", error)
-      
-      if (error instanceof DOMException && error.name === 'NotAllowedError') {
-        setErrorMessage("Microphone permission denied. Please allow microphone access in your browser settings and try again.")
-      } else {
-        setErrorMessage("Failed to start audio recording. This feature may not be available in this environment.")
-      }
-      
-      setIsRecording(false)
+      console.error("Error starting Whisper recording:", error)
+      handleRecordingError(error)
     }
   }
-
+  
+  // Start GPT-4o Realtime streaming recording
+  const startRealtimeRecording = async () => {
+    try {
+      // Request microphone permission
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
+      
+      // Clear previous transcripts
+      setTranscript("")
+      setInterimTranscript("")
+      
+      // Create AudioContext for processing
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+      const source = audioContext.createMediaStreamSource(stream)
+      const processor = audioContext.createScriptProcessor(4096, 1, 1)
+      
+      // Connect the audio processor
+      source.connect(processor)
+      processor.connect(audioContext.destination)
+      
+      // Create a WebSocket connection to the GPT-4o Realtime API
+      // Note: In a real implementation, this would connect to your backend which handles the OpenAI API auth
+      const socket = new WebSocket('wss://api.openai.com/v1/audio/speech')
+      socketRef.current = socket
+      
+      // Set up WebSocket event handlers
+      socket.onopen = () => {
+        console.log('WebSocket connection established for realtime transcription')
+        
+        // Send initial configuration message
+        socket.send(JSON.stringify({
+          type: 'config',
+          model: 'gpt-4o',
+          language: 'en',
+          // Include any other required configuration
+        }))
+      }
+      
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          
+          // Handle different message types from the API
+          if (data.type === 'transcript') {
+            // If it's a final transcript, add it to the main transcript
+            if (data.is_final) {
+              setTranscript(prev => prev + ' ' + data.text.trim())
+              setInterimTranscript('')
+            } else {
+              // Otherwise, show it as interim transcript
+              setInterimTranscript(data.text.trim())
+            }
+          }
+        } catch (error) {
+          console.error('Error parsing WebSocket message:', error)
+        }
+      }
+      
+      socket.onerror = (error) => {
+        console.error('WebSocket error:', error)
+        handleRecordingError(error)
+      }
+      
+      socket.onclose = () => {
+        console.log('WebSocket connection closed')
+        // Clean up the audio processing
+        if (processor && source) {
+          source.disconnect()
+          processor.disconnect()
+        }
+      }
+      
+      // Set up the audio processor to send audio data
+      processor.onaudioprocess = (e) => {
+        // Only send audio data if the WebSocket is open
+        if (socket.readyState === WebSocket.OPEN) {
+          // Get the audio data from the input channel
+          const inputData = e.inputBuffer.getChannelData(0)
+          
+          // Convert the float32 audio data to Int16 for transmission
+          const int16Array = new Int16Array(inputData.length)
+          for (let i = 0; i < inputData.length; i++) {
+            // Convert Float32 to Int16
+            int16Array[i] = Math.min(1, Math.max(-1, inputData[i])) * 32767
+          }
+          
+          // Send the audio data as a binary message
+          socket.send(int16Array.buffer)
+        }
+      }
+      
+      // Update state
+      setAudioState({
+        recording: true,
+        audioBlob: null,
+        mediaRecorder: null,
+        audioChunks: [],
+        streamingMode: true
+      })
+      
+      setIsRecording(true)
+      console.log('Started recording using GPT-4o Realtime streaming approach')
+    } catch (error) {
+      console.error("Error starting Realtime recording:", error)
+      handleRecordingError(error)
+    }
+  }
+  
+  // Handle recording errors
+  const handleRecordingError = (error: any) => {
+    console.error('Recording error:', error)
+    
+    // Reset recording state
+    setIsRecording(false)
+    setIsProcessing(false)
+    
+    // Show appropriate error message
+    setErrorMessage("Could not access microphone. Please check permissions and try again.")
+  }
+  
+  // Combined start recording function that selects the appropriate approach
+  const startRecording = async () => {
+    try {
+      // Clear previous state
+      setErrorMessage(null)
+      setTranscript("")
+      setInterimTranscript("")
+      setGroceryItems([])
+      
+      // If we're using mock data, just simulate recording
+      if (useMockData) {
+        setIsRecording(true)
+        
+        // Simulate recording for 2 seconds
+        setTimeout(() => {
+          setIsRecording(false)
+          setTranscript(mockTranscript)
+          setGroceryItems(mockGroceryItems)
+        }, 2000)
+        
+        return
+      }
+      
+      // First try Whisper approach if MediaRecorder is supported
+      if (browserFeatures.supportsMediaRecorder) {
+        await startWhisperRecording()
+      }
+      // Fall back to GPT-4o Realtime API if WebSockets are supported
+      else if (browserFeatures.supportsRealtime) {
+        await startRealtimeRecording()
+      }
+      // No valid recording method available
+      else {
+        setErrorMessage("Your browser doesn't support voice recording. Please try a different browser.")
+      }
+    } catch (error) {
+      console.error("Error starting recording:", error)
+      handleRecordingError(error)
+    }
+  }
+  
+  // Stop recording function
   const stopRecording = () => {
-    // If using mock data, use it when stopping
-    if (useMockData) {
-      setTranscript(mockTranscript)
-      processTranscript(mockTranscript)
-      setIsRecording(false)
-      return
+    // Handle Whisper API approach
+    if (audioState.mediaRecorder && audioState.recording) {
+      // Stop the media recorder
+      audioState.mediaRecorder.stop()
     }
     
-    // Stop the media recorder if it exists
-    if (audioState.mediaRecorder && audioState.recording) {
-      audioState.mediaRecorder.stop()
-      
-      // Stop all tracks in the stream
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop())
+    // Handle GPT-4o Realtime approach
+    if (audioState.streamingMode && socketRef.current) {
+      // Send a close message if needed by the API
+      if (socketRef.current.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({ type: 'close' }))
       }
+      
+      // Close the WebSocket connection
+      socketRef.current.close()
+      socketRef.current = null
+      
+      // Process the current transcript as the final result
+      if (transcript) {
+        console.log('Processing final streaming transcript')
+        processTranscript(transcript)
+      }
+    }
+    
+    // Stop all tracks in the stream
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop())
+      streamRef.current = null
     }
     
     setIsRecording(false)
+    console.log('Recording stopped')
   }
   
-  // Process the recorded audio using OpenAI's transcription API
+  // Process the recorded audio using OpenAI's transcription API (Whisper)
   const processRecordedAudio = async (audioBlob: Blob) => {
     if (!audioBlob) {
       setErrorMessage("No audio recorded. Please try again.")
@@ -176,24 +396,25 @@ export default function VoiceRecorder() {
     try {
       setIsProcessing(true)
       
-      // Transcribe the audio using our OpenAI service
-      const transcribedText = await transcribeAudio(audioBlob)
+      // Transcribe the audio using our OpenAI Whisper service
+      const result = await transcribeAudio(audioBlob)
       
-      if (transcribedText) {
-        console.log('Audio transcribed:', transcribedText)
+      if (result) {
+        console.log('Audio transcribed with Whisper:', result)
+        setTranscript(result)
         // Process the transcript to extract grocery items
-        await processTranscript(transcribedText)
+        await processTranscript(result)
       } else {
         setErrorMessage("Couldn't transcribe audio. Please try again.")
       }
-    } catch (error) {
-      console.error("Error processing audio:", error)
+    } catch (err) {
+      console.error("Error processing audio with Whisper API:", err)
       setErrorMessage("Error processing audio. Please try again.")
     } finally {
       setIsProcessing(false)
     }
   }
-
+  
   const toggleRecording = () => {
     if (!isRecording) {
       startRecording()
@@ -201,11 +422,11 @@ export default function VoiceRecorder() {
       stopRecording()
     }
   }
-
+  
   const toggleMockData = (e: React.MouseEvent) => {
     e.preventDefault()
     setUseMockData(!useMockData)
-
+    
     if (!isRecording && !useMockData) {
       setTranscript(mockTranscript)
       setGroceryItems(mockGroceryItems)
@@ -214,13 +435,30 @@ export default function VoiceRecorder() {
       setGroceryItems([])
     }
   }
-
-  const updateItemQuantity = (id: string, change: number) => {
+  
+  const updateItemQuantity = (itemId: string, changeAmount: number) => {
     setGroceryItems((prevItems) =>
-      prevItems.map((item) => (item.id === id ? { ...item, quantity: Math.max(1, item.quantity + change) } : item))
+      prevItems.map((item) => (item.id === itemId ? { ...item, quantity: Math.max(1, item.quantity + changeAmount) } : item))
     )
   }
-
+  
+  // Determine the recording mode display text
+  const getRecordingModeText = () => {
+    if (!browserFeatures.supportsMediaRecorder && !browserFeatures.supportsRealtime) {
+      return "Voice recording not supported in this browser"
+    }
+    
+    if (audioState.streamingMode) {
+      return "Using GPT-4o Realtime API (streaming mode)"
+    }
+    
+    if (browserFeatures.supportsMediaRecorder) {
+      return `Using Whisper API (${browserFeatures.preferredMimeType || 'audio/webm'})`
+    }
+    
+    return "Ready to record"
+  }
+  
   return (
     <div className="flex flex-col items-center w-full">
       <header className="flex items-center justify-center gap-3 mb-12 pt-8">
@@ -230,10 +468,15 @@ export default function VoiceRecorder() {
         <h1 className="text-4xl font-extrabold tracking-tight">Grocery Voice Assistant</h1>
       </header>
 
-      <div className="w-full max-w-md mb-12">
+      <div className="w-full max-w-md mb-8">
+        {/* Recording mode indicator */}
+        <div className="text-sm text-center text-gray-500 mb-2">
+          {getRecordingModeText()}
+        </div>
+        
         <button
           onClick={toggleRecording}
-          disabled={isProcessing}
+          disabled={isProcessing || (!browserFeatures.supportsMediaRecorder && !browserFeatures.supportsRealtime && !useMockData)}
           className={`
             w-full py-5 text-lg font-medium rounded-2xl shadow-lg 
             transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98]
@@ -248,38 +491,75 @@ export default function VoiceRecorder() {
           <span className="flex items-center justify-center gap-2">
             {isProcessing ? (
               <>
-                <span className="animate-pulse">Processing with GPT-4o mini...</span>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span>Processing...</span>
               </>
             ) : isRecording ? (
               <>
                 <Square className="w-5 h-5" />
-                Stop & Transcribe
+                <span>Stop & Transcribe</span>
               </>
             ) : (
               <>
                 <Mic className="w-5 h-5" />
-                Start Recording
+                <span>Start Recording</span>
               </>
             )}
           </span>
         </button>
-
-        <button
-          onClick={toggleMockData}
-          className="mt-4 mx-auto block text-sm text-gray-400 hover:text-pink-400 transition-colors underline focus:outline-none focus:ring-2 focus:ring-pink-400 rounded-md px-2 py-1"
-        >
-          {useMockData ? "Disable mock data" : "Use mock data for testing"}
-        </button>
         
-        {errorMessage && (
-          <div className="mt-4 p-3 bg-red-900/50 text-red-300 rounded-xl max-w-md text-sm border border-red-800">
-            <p>{errorMessage}</p>
+        <div className="text-sm text-center">
+          {isRecording ? 'Tap to stop recording' : 'Tap to start recording'}
+        </div>
+        
+        {isProcessing && (
+          <div className="text-sm text-center animate-pulse mt-2">
+            Processing your voice...
           </div>
         )}
-      </div>
+        
+        {errorMessage && (
+          <div className="p-3 text-sm bg-red-100 border border-red-300 text-red-800 rounded-md mt-2">
+            {errorMessage}
+          </div>
+        )}
 
+        {/* Toggle for mock data in development */}
+        <div className="flex items-center space-x-2 text-sm mt-2">
+          <input 
+            type="checkbox" 
+            id="mock-data" 
+            checked={useMockData} 
+            onChange={() => setUseMockData(!useMockData)}
+            className="h-4 w-4 text-pink-600"
+          />
+          <label htmlFor="mock-data" className="text-gray-700">
+            Use mock data (for development only)
+          </label>
+        </div>
+      </div>
+      
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 w-full">
-        <TranscriptPanel transcript={transcript} />
+        <div className="flex flex-col space-y-4">
+          <TranscriptPanel transcript={transcript} />
+          
+          {/* Show interim transcript for streaming mode */}
+          {interimTranscript && (
+            <div className="p-4 bg-gray-50 rounded-xl border border-gray-200 text-gray-600 italic">
+              <div className="text-xs uppercase tracking-wider text-gray-400 mb-1">Streaming transcript:</div>
+              {interimTranscript}...
+            </div>
+          )}
+          
+          {/* Show transcription mode badge */}
+          {isRecording && audioState.streamingMode && (
+            <div className="inline-flex items-center self-center px-3 py-1 rounded-full bg-blue-100 text-blue-800 text-xs font-medium">
+              <div className="mr-1.5 w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
+              Live streaming
+            </div>
+          )}
+        </div>
+        
         <GroceryList items={groceryItems} updateQuantity={updateItemQuantity} />
       </div>
     </div>
