@@ -21,12 +21,12 @@ export async function POST(request: NextRequest) {
     const openai = getOpenAIClient();
     
     // Get the form data from the request
-    const requestFormData = await request.formData();
-    const audioFile = requestFormData.get('file') as File;
-    const model = requestFormData.get('model') as string || 'gpt-4o-mini';
+    const formData = await request.formData();
+    const audioFile = formData.get('file') as File;
+    const model = formData.get('model') as string || 'gpt-4o-mini';
     
     if (!audioFile) {
-      logger.error('No audio file provided', { requestFormData });
+      logger.error('No audio file provided', { formData });
       return NextResponse.json({ error: 'No audio file provided' }, { status: 400 });
     }
     
@@ -37,59 +37,67 @@ export async function POST(request: NextRequest) {
       model: model
     });
     
-    try {
-      // Get the OpenAI API key from environment variables
-      const apiKey = process.env.OPENAI_API_KEY;
-      if (!apiKey) {
-        throw new Error('OpenAI API key is not configured');
-      }
+    // Different handling for Vercel (serverless) vs local environment
+    const isVercel = process.env.VERCEL === '1';
+    logger.info(`Execution environment: ${isVercel ? 'Vercel' : 'Local'}`);
+    
+    let transcription;
+    
+    if (isVercel) {
+      // Vercel environment - use memory approach
+      const arrayBuffer = await audioFile.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
       
-      // Get the audio data
-      const audioBytes = await audioFile.arrayBuffer();
+      // Create a Blob and File object
+      const blob = new Blob([buffer], { type: audioFile.type });
+      const file = new File([blob], audioFile.name, { type: audioFile.type });
       
-      // Create a FormData object to send directly to OpenAI API
-      const formData = new FormData();
-      formData.append('file', new Blob([audioBytes]), 'audio.webm');
-      formData.append('model', 'whisper-1');
-      formData.append('response_format', 'json');
-      
-      // Make a direct fetch request to the OpenAI API
-      const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`
-        },
-        body: formData
+      // Call the OpenAI transcription API directly with the file
+      transcription = await openai.audio.transcriptions.create({
+        file: file,
+        model: "whisper-1",
+        response_format: "json",
       });
       
-      if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`OpenAI API error: ${response.status} - ${errorData}`);
+      logger.info('Transcription completed successfully (Vercel)');
+    } else {
+      // Local environment - use file system approach
+      const bytes = await audioFile.arrayBuffer();
+      const buffer = Buffer.from(bytes);
+      
+      // Create a temporary file path
+      const fs = require('fs');
+      const os = require('os');
+      const path = require('path');
+      const tempFilePath = path.join(os.tmpdir(), `recording-${Date.now()}.webm`);
+      
+      // Write the buffer to a temporary file
+      fs.writeFileSync(tempFilePath, buffer);
+      
+      try {
+        // Call the OpenAI transcription API with the file path
+        transcription = await openai.audio.transcriptions.create({
+          file: fs.createReadStream(tempFilePath),
+          model: "whisper-1", // OpenAI's transcription model
+          response_format: "json",
+        });
+        
+        logger.info('Transcription completed successfully (Local)');
+      } finally {
+        // Clean up the temporary file
+        try {
+          if (fs.existsSync(tempFilePath)) {
+            fs.unlinkSync(tempFilePath);
+            logger.info(`Temporary file ${tempFilePath} deleted`);
+          }
+        } catch (cleanupError) {
+          logger.error('Error cleaning up temporary file', cleanupError);
+        }
       }
-      
-      const transcription = await response.json();
-      
-      logger.info('Transcription completed successfully');
-      
-      // Return the transcription
-      return NextResponse.json({ text: transcription.text });
-    } catch (openaiError: any) {
-      // Log the detailed error
-      logger.error('OpenAI API error', { 
-        error: openaiError, 
-        message: openaiError.message,
-        response: openaiError.response?.data
-      });
-      
-      // Return a detailed error response
-      return NextResponse.json({ 
-        error: 'Transcription failed', 
-        details: openaiError.message,
-        apiResponse: openaiError.response?.data || 'No additional details'
-      }, { status: 500 });
     }
     
-    // This section is replaced by the try/catch block above
+    // Return the transcription
+    return NextResponse.json({ text: transcription.text });
   } catch (error) {
     logger.error('Error transcribing audio', error);
     
