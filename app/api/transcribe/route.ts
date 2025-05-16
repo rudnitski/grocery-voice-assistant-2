@@ -17,96 +17,105 @@ export async function POST(request: NextRequest) {
   logger.info('Received audio transcription request');
   
   try {
-    // Get the OpenAI client
-    const openai = getOpenAIClient();
-    
     // Get the form data from the request
     const formData = await request.formData();
     const audioFile = formData.get('file') as File;
-    const model = formData.get('model') as string || 'gpt-4o-mini';
     
     if (!audioFile) {
-      logger.error('No audio file provided', { formData });
+      logger.error('No audio file provided', null);
       return NextResponse.json({ error: 'No audio file provided' }, { status: 400 });
     }
     
-    logger.info('Transcribing audio file', { 
+    logger.info('Processing audio file', { 
       fileName: audioFile.name, 
       fileSize: audioFile.size, 
-      fileType: audioFile.type,
-      model: model
+      fileType: audioFile.type
     });
-    
-    // Different handling for Vercel (serverless) vs local environment
-    const isVercel = process.env.VERCEL === '1';
-    logger.info(`Execution environment: ${isVercel ? 'Vercel' : 'Local'}`);
-    
-    let transcription;
-    
-    if (isVercel) {
-      // Vercel environment - use memory approach
+
+    try {
+      // Get OpenAI client
+      const openai = getOpenAIClient();
+      
+      // Get the audio data as an ArrayBuffer
       const arrayBuffer = await audioFile.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
       
-      // Create a Blob and File object
-      const blob = new Blob([buffer], { type: audioFile.type });
-      const file = new File([blob], audioFile.name, { type: audioFile.type });
+      // Create a form for the OpenAI API
+      const form = new FormData();
       
-      // Call the OpenAI transcription API directly with the file
-      transcription = await openai.audio.transcriptions.create({
-        file: file,
-        model: "whisper-1",
-        response_format: "json",
+      // Create a new File object from the ArrayBuffer
+      // This works in both environments
+      const file = new File(
+        [arrayBuffer], 
+        audioFile.name, 
+        { type: audioFile.type }
+      );
+      
+      // Add the file to the FormData
+      form.append('file', file);
+      form.append('model', 'whisper-1');
+      form.append('response_format', 'json');
+      
+      logger.info('Sending transcription request to OpenAI');
+      
+      // Create a fetch request to OpenAI directly
+      const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        },
+        body: form,
       });
       
-      logger.info('Transcription completed successfully (Vercel)');
-    } else {
-      // Local environment - use file system approach
-      const bytes = await audioFile.arrayBuffer();
-      const buffer = Buffer.from(bytes);
+      if (!response.ok) {
+        const errorText = await response.text();
+        logger.error('OpenAI API error', { status: response.status, error: errorText });
+        throw new Error(`OpenAI API error: ${response.status}`);
+      }
       
-      // Create a temporary file path
-      const fs = require('fs');
-      const os = require('os');
-      const path = require('path');
-      const tempFilePath = path.join(os.tmpdir(), `recording-${Date.now()}.webm`);
+      const transcription = await response.json();
+      logger.info('Transcription successful');
       
-      // Write the buffer to a temporary file
-      fs.writeFileSync(tempFilePath, buffer);
+      return NextResponse.json({ text: transcription.text });
       
-      try {
-        // Call the OpenAI transcription API with the file path
-        transcription = await openai.audio.transcriptions.create({
-          file: fs.createReadStream(tempFilePath),
-          model: "whisper-1", // OpenAI's transcription model
-          response_format: "json",
-        });
+    } catch (apiError: any) {
+      // Log the complete error object
+      logger.error('OpenAI API error', apiError);
+      
+      // Extract useful error information
+      let errorMessage = 'Unknown error';
+      let errorDetails = {};
+      
+      if (apiError instanceof Error) {
+        errorMessage = apiError.message;
+        errorDetails = {
+          name: apiError.name,
+          stack: apiError.stack,
+        };
         
-        logger.info('Transcription completed successfully (Local)');
-      } finally {
-        // Clean up the temporary file
-        try {
-          if (fs.existsSync(tempFilePath)) {
-            fs.unlinkSync(tempFilePath);
-            logger.info(`Temporary file ${tempFilePath} deleted`);
+        // Try to extract more details from OpenAI error response
+        if ('response' in apiError && apiError.response) {
+          const response = apiError.response as Record<string, any>;
+          if (response && typeof response === 'object' && 'data' in response) {
+            errorDetails = { ...errorDetails, response: response.data };
           }
-        } catch (cleanupError) {
-          logger.error('Error cleaning up temporary file', cleanupError);
         }
       }
+      
+      return NextResponse.json({
+        error: 'Failed to transcribe audio',
+        message: errorMessage,
+        details: errorDetails
+      }, { status: 500 });
     }
     
-    // Return the transcription
-    return NextResponse.json({ text: transcription.text });
   } catch (error) {
-    logger.error('Error transcribing audio', error);
+    logger.error('Request processing error', error);
     
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    const statusCode = 500;
     
     return NextResponse.json({ 
-      error: 'Failed to transcribe audio', 
+      error: 'Failed to process request', 
       details: errorMessage 
-    }, { status: statusCode });
+    }, { status: 500 });
   }
 }
