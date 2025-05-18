@@ -20,6 +20,12 @@ You are a data extraction assistant for a grocery shopping app.
 
 Your task: Extract only real grocery items (food, beverages, common household goods) and their quantities from the transcript below. The transcript may be in any language - do NOT translate the items, keep them in the original language.
 
+User’s usual groceries (canonical list):
+{USUAL_GROCERIES}
+
+• If an extracted item is a close match or alias of any entry above, return the canonical spelling from that list.  
+• Otherwise, return the item exactly as spoken.
+
 Instructions:
 - Output a valid JSON ARRAY of objects.
 - Each object must have exactly two properties:
@@ -87,18 +93,30 @@ const GROCERY_RESPONSE_FORMAT = {
 /**
  * Extract grocery items from a transcript using OpenAI
  * @param transcript - The transcript to extract items from
+ * @param usualGroceries - The user's usual grocery list
  * @returns An array of grocery items with their quantities
  */
-export const extractGroceryItems = async (transcript: string): Promise<Array<{item: string; quantity: number}>> => {
+export const extractGroceryItems = async (
+  transcript: string, 
+  usualGroceries: string = ''
+): Promise<Array<{item: string; quantity: number}>> => {
   if (!transcript || typeof transcript !== 'string') {
     logger.error('Invalid transcript provided', { transcript });
     throw new Error('Invalid transcript provided');
   }
 
   try {
+    // Replace the placeholder with actual groceries
+    const promptWithGroceries = GROCERY_EXTRACTION_PROMPT.replace(
+      '{USUAL_GROCERIES}',
+      usualGroceries || 'No usual groceries provided'
+    );
+    
+    logger.info('Processing transcript with usual groceries', { hasUsualGroceries: !!usualGroceries });
+    
     // Use the generic OpenAI service to make the request
     const result = await makeChatCompletion(
-      GROCERY_EXTRACTION_PROMPT,
+      promptWithGroceries,
       transcript,
       {
         model: "gpt-4o-mini",

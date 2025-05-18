@@ -20,16 +20,20 @@ export async function POST(request: NextRequest) {
     const requestBody = await request.json();
     logger.info('Request body received', { requestBody });
     
-    const { transcript } = requestBody;
+    const { transcript, usualGroceries } = requestBody;
     console.log("📝 Received transcript:", transcript);
+    
+    if (usualGroceries) {
+      console.log("🛒 Received usual groceries list", { length: usualGroceries.length });
+    }
     
     if (!transcript || typeof transcript !== 'string') {
       logger.info('Invalid transcript provided');
       return NextResponse.json({ error: 'Invalid transcript provided' }, { status: 400 });
     }
 
-    // Use the extractGroceryItems function from our service
-    const items = await extractGroceryItems(transcript);
+    // Use the extractGroceryItems function from our service with usual groceries
+    const items = await extractGroceryItems(transcript, usualGroceries);
     
     // Log the results
     logger.info(`Found ${items.length} grocery items`);

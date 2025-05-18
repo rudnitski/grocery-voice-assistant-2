@@ -163,14 +163,14 @@ export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
  * @param transcript - The transcript to process
  * @returns The extracted grocery items
  */
-export const processTranscriptClient = async (transcript: string): Promise<Array<{id: string; name: string; quantity: number}>> => {
+export const processTranscriptClient = async (transcript: string, usualGroceries?: string): Promise<Array<{id: string; name: string; quantity: number}>> => {
   try {
     const response = await fetch('/api/parse_groceries', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ transcript }),
+      body: JSON.stringify({ transcript, usualGroceries }),
     });
     
     if (!response.ok) {

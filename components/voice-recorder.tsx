@@ -5,6 +5,7 @@ import { useState, useRef, useEffect } from "react"
 import { Mic, Square, Loader2 } from "lucide-react"
 import TranscriptPanel from "./transcript-panel"
 import GroceryList from "./grocery-list"
+import UsualGroceries from "./usual-groceries"
 import { mockTranscript, mockGroceryItems } from "@/lib/mock-data"
 import { processTranscriptClient, transcribeAudio } from "@/lib/services/openai-service"
 
@@ -53,6 +54,7 @@ export default function VoiceRecorder() {
   const [groceryItems, setGroceryItems] = useState<Array<{ id: string; name: string; quantity: number }>>([])  
   const [useMockData, setUseMockData] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [usualGroceries, setUsualGroceries] = useState("")
   
   // Feature detection state
   const [browserFeatures, setBrowserFeatures] = useState({
@@ -85,23 +87,43 @@ export default function VoiceRecorder() {
     }
     
     try {
-      // Use our service to process the transcript
-      const items = await processTranscriptClient(text)
+      // Use our service to process the transcript, passing usual groceries for context
+      const items = await processTranscriptClient(text, usualGroceries)
       setGroceryItems(items)
     } catch (error) {
       console.error('Error processing transcript:', error)
       // Fallback to simple parsing if API call fails
       const items = text.split(/,|and/).map((item, index) => {
         const trimmed = item.trim()
+        
+        // Try to match with usual groceries for better accuracy
+        let bestMatch = trimmed.toLowerCase()
+        if (usualGroceries) {
+          const usualItems = usualGroceries.split('\n').map(i => i.trim().toLowerCase())
+          // Find closest match if possible
+          const possibleMatches = usualItems.filter(usual => 
+            usual.includes(bestMatch) || bestMatch.includes(usual)
+          )
+          if (possibleMatches.length > 0) {
+            // Use the closest match by length
+            bestMatch = possibleMatches.sort((a, b) => Math.abs(a.length - bestMatch.length) - Math.abs(b.length - bestMatch.length))[0]
+          }
+        }
+        
         return {
           id: String(index + 1),
-          name: trimmed.toLowerCase(),
+          name: bestMatch,
           quantity: 1
         }
       }).filter(item => item.name.length > 0)
       
       setGroceryItems(items)
     }
+  }
+  
+  // Handler for when usual groceries change
+  const handleUsualGroceriesChange = (groceries: string) => {
+    setUsualGroceries(groceries)
   }
 
   // Initialize feature detection on mount
@@ -539,7 +561,7 @@ export default function VoiceRecorder() {
         </div>
       </div>
       
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 w-full">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 w-full mb-8">
         <div className="flex flex-col space-y-4">
           <TranscriptPanel transcript={transcript} />
           
@@ -562,6 +584,9 @@ export default function VoiceRecorder() {
         
         <GroceryList items={groceryItems} updateQuantity={updateItemQuantity} />
       </div>
+      
+      {/* Usual groceries textarea */}
+      <UsualGroceries onUsualGroceriesChange={handleUsualGroceriesChange} />
     </div>
   )
 }
