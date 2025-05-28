@@ -1,4 +1,5 @@
 import { makeChatCompletion, parseJsonResponse } from './openai-service';
+import { GROCERY_EXTRACTION_PROMPT } from '../prompts/grocery-prompts';
 
 // Simple logger for tracking API requests
 const logger = {
@@ -12,41 +13,7 @@ const logger = {
   }
 };
 
-/**
- * The grocery extraction prompt
- */
-const GROCERY_EXTRACTION_PROMPT = `
-You are a data extraction assistant for a grocery shopping app.
-
-Your task: Extract only real grocery items (food, beverages, common household goods) and their quantities from the transcript below. The transcript may be in any language - do NOT translate the items, keep them in the original language.
-
-User’s usual groceries (canonical list):
-{USUAL_GROCERIES}
-
-• If an extracted item is a close match or alias of any entry above, return the canonical spelling from that list.  
-• Otherwise, return the item exactly as spoken.
-
-Instructions:
-- Output a valid JSON ARRAY of objects.
-- Each object must have exactly two properties:
-  - "item": the name of the grocery item in singular form (string) in the ORIGINAL LANGUAGE.
-  - "quantity": the amount, either a number or a descriptive string (e.g., "1", "1 liter", "500 грамм").
-- Only include things people actually buy in a grocery store.
-- Ignore words, numbers, or phrases that are not typical grocery items.
-- Do NOT include objects that are not real groceries or household goods.
-- DO NOT translate the items to English - keep them in the original language of the transcript.
-
-Rules:
-- Respond with JSON array ONLY. No explanations or extra text.
-- If the transcript does not specify a quantity, assume "1".
-- Convert plural item names to singular form when possible.
-- If your response must be empty, respond with an empty array [].
-
-Example valid items in different languages:
-English: "milk", "eggs", "toilet paper", "chicken breast"
-Russian: "молоко", "яйца", "туалетная бумага", "куриная грудка"
-Spanish: "leche", "huevos", "papel higiénico", "pechuga de pollo"
-`;
+// GROCERY_EXTRACTION_PROMPT is now imported from '../prompts/grocery-prompts'
 
 /**
  * The response format for grocery extraction
@@ -107,7 +74,8 @@ export const extractGroceryItems = async (
 
   try {
     // Replace the placeholder with actual groceries
-    const promptWithGroceries = GROCERY_EXTRACTION_PROMPT.replace(
+    // Create a modified prompt with usual groceries
+    let promptWithGroceries = GROCERY_EXTRACTION_PROMPT.replace(
       '{USUAL_GROCERIES}',
       usualGroceries || 'No usual groceries provided'
     );
@@ -119,7 +87,7 @@ export const extractGroceryItems = async (
       promptWithGroceries,
       transcript,
       {
-        model: "gpt-4o-mini",
+        model: "gpt-4o",
         responseFormat: GROCERY_RESPONSE_FORMAT,
         temperature: 0,
         maxTokens: 2048
@@ -160,7 +128,7 @@ export const extractGroceryItems = async (
         }
       }
       
-      // Log each individual item for better visibility
+      // Log each item for better visibility
       logger.info(`Found ${items.length} grocery items:`);
       items.forEach((item, index) => {
         logger.info(`Item ${index + 1}:`, item);

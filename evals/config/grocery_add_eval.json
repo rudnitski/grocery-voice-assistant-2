@@ -1,0 +1,24 @@
+{
+  "name": "Groceries eval",
+  "data_source_config": {
+    "type": "custom",
+    "item_schema": {
+      "type": "object",
+      "properties": {
+        "utterance":   { "type": "string" },
+        "expect_json": { "type": "string" }
+      },
+      "required": ["utterance","expect_json"]
+    },
+    "include_sample_schema": true
+  },
+ "testing_criteria": [
+    {
+      "type": "string_check",
+      "name": "Exact JSON match",
+      "input":    "{{ sample.output_text }}",
+      "operation":"eq",
+      "reference":"{{ item.expect_json }}"
+    }
+  ]
+}

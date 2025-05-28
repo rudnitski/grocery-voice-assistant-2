@@ -8,6 +8,8 @@ import GroceryList from "./grocery-list"
 import UsualGroceries from "./usual-groceries"
 import { mockTranscript, mockGroceryItems } from "@/lib/mock-data"
 import { processTranscriptClient, transcribeAudio } from "@/lib/services/openai-service"
+import { Card } from "./ui/card"
+import { Separator } from "./ui/separator"
 
 // Audio recording interfaces
 interface AudioRecorderState {
@@ -55,6 +57,7 @@ export default function VoiceRecorder() {
   const [useMockData, setUseMockData] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [usualGroceries, setUsualGroceries] = useState("")
+  const [rawJsonResponse, setRawJsonResponse] = useState<string>("") // Store the raw JSON response from OpenAI
   
   // Feature detection state
   const [browserFeatures, setBrowserFeatures] = useState({
@@ -83,13 +86,20 @@ export default function VoiceRecorder() {
     if (useMockData) {
       // Use mock data directly if enabled
       setGroceryItems(mockGroceryItems)
+      // Set mock JSON response for demonstration
+      setRawJsonResponse(JSON.stringify({ items: mockGroceryItems, transcript: mockTranscript }, null, 2))
       return
     }
     
     try {
       // Use our service to process the transcript, passing usual groceries for context
-      const items = await processTranscriptClient(text, usualGroceries)
+      const { items, rawResponse } = await processTranscriptClient(text, usualGroceries)
       setGroceryItems(items)
+      
+      // Store the raw JSON response for display
+      if (rawResponse) {
+        setRawJsonResponse(typeof rawResponse === 'string' ? rawResponse : JSON.stringify(rawResponse, null, 2))
+      }
     } catch (error) {
       console.error('Error processing transcript:', error)
       // Fallback to simple parsing if API call fails
@@ -118,6 +128,8 @@ export default function VoiceRecorder() {
       }).filter(item => item.name.length > 0)
       
       setGroceryItems(items)
+      // Clear raw JSON on error
+      setRawJsonResponse("")
     }
   }
   
@@ -584,6 +596,19 @@ export default function VoiceRecorder() {
         
         <GroceryList items={groceryItems} updateQuantity={updateItemQuantity} />
       </div>
+      
+      {/* Raw JSON Response Section */}
+      {rawJsonResponse && (
+        <Card className="w-full mb-8 overflow-hidden">
+          <div className="p-4 bg-gray-100">
+            <h3 className="text-lg font-medium mb-2">Raw JSON Response</h3>
+            <Separator className="mb-3" />
+            <pre className="bg-gray-900 text-green-400 p-4 rounded overflow-x-auto text-sm">
+              {rawJsonResponse}
+            </pre>
+          </div>
+        </Card>
+      )}
       
       {/* Usual groceries textarea */}
       <UsualGroceries onUsualGroceriesChange={handleUsualGroceriesChange} />

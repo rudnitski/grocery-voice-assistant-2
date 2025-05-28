@@ -85,7 +85,7 @@ export const makeChatCompletion = async (
     
     logger.info('Sending request to OpenAI');
     const completion = await openai.chat.completions.create({
-      model: options?.model || "gpt-4o-mini",
+      model: options?.model || "gpt-4o",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userMessage }
@@ -161,9 +161,16 @@ export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
  * Process a transcript to extract grocery items
  * This is a client-side friendly version that calls the API endpoint
  * @param transcript - The transcript to process
- * @returns The extracted grocery items
+ * @param usualGroceries - Optional list of usual groceries to aid in recognition
+ * @returns Object containing the extracted grocery items and the raw JSON response
  */
-export const processTranscriptClient = async (transcript: string, usualGroceries?: string): Promise<Array<{id: string; name: string; quantity: number}>> => {
+export const processTranscriptClient = async (
+  transcript: string, 
+  usualGroceries?: string
+): Promise<{
+  items: Array<{id: string; name: string; quantity: number}>;
+  rawResponse: string;
+}> => {
   try {
     const response = await fetch('/api/parse_groceries', {
       method: 'POST',
@@ -179,9 +186,14 @@ export const processTranscriptClient = async (transcript: string, usualGroceries
     
     const data = await response.json();
     
+    // Store the raw JSON response
+    const rawResponse = JSON.stringify(data, null, 2);
+    
+    let processedItems: Array<{id: string; name: string; quantity: number}> = [];
+    
     if (data.items && Array.isArray(data.items)) {
       // Format the items to match our expected structure
-      return data.items.map((item: any, index: number) => {
+      processedItems = data.items.map((item: any, index: number) => {
         // Check if item has the expected properties
         const itemName = item.item || item.name || '';
         return {
@@ -192,7 +204,10 @@ export const processTranscriptClient = async (transcript: string, usualGroceries
       });
     }
     
-    return [];
+    return {
+      items: processedItems,
+      rawResponse
+    };
   } catch (error) {
     console.error('Error processing transcript:', error);
     throw error;
