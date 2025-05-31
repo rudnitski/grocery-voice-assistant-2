@@ -51,7 +51,8 @@ const detectFeatures = () => {
 export default function VoiceRecorder() {
   const [isRecording, setIsRecording] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
-  const [transcript, setTranscript] = useState("")
+  const [transcript, setTranscript] = useState("") // Stores the last successfully processed transcript (voice or manual)
+  const [manualTranscript, setManualTranscript] = useState("") // Live text in the editable textarea for manual input/editing
   const [interimTranscript, setInterimTranscript] = useState("")
   const [groceryItems, setGroceryItems] = useState<Array<{ id: string; name: string; quantity: number }>>([])  
   const [useMockData, setUseMockData] = useState(false)
@@ -79,60 +80,107 @@ export default function VoiceRecorder() {
   const streamRef = useRef<MediaStream | null>(null)
   const socketRef = useRef<WebSocket | null>(null)
 
-  // Process transcript to extract grocery items using our service
-  const processTranscript = async (text: string) => {
-    setTranscript(text)
-    
+  // Internal core function to process text from any source
+  const _processTextInternal = async (textToProcess: string) => {
+    setErrorMessage(null);
+    setIsProcessing(true);
+
     if (useMockData) {
-      // Use mock data directly if enabled
-      setGroceryItems(mockGroceryItems)
-      // Set mock JSON response for demonstration
-      setRawJsonResponse(JSON.stringify({ items: mockGroceryItems, transcript: mockTranscript }, null, 2))
-      return
+      setGroceryItems(mockGroceryItems);
+      setRawJsonResponse(JSON.stringify({ items: mockGroceryItems, transcript: mockTranscript }, null, 2));
+      setIsProcessing(false);
+      return;
     }
-    
+
     try {
-      // Use our service to process the transcript, passing usual groceries for context
-      const { items, rawResponse } = await processTranscriptClient(text, usualGroceries)
-      setGroceryItems(items)
-      
-      // Store the raw JSON response for display
-      if (rawResponse) {
-        setRawJsonResponse(typeof rawResponse === 'string' ? rawResponse : JSON.stringify(rawResponse, null, 2))
+      const { items: _, rawResponse } = await processTranscriptClient(textToProcess, usualGroceries); // We'll use rawResponse primarily
+    
+    let itemsToProcessFromAI = [];
+    if (rawResponse) {
+      try {
+        const parsedRaw = JSON.parse(rawResponse);
+        if (parsedRaw && Array.isArray(parsedRaw.items)) {
+          itemsToProcessFromAI = parsedRaw.items;
+        }
+      } catch (e) {
+        console.error('Failed to parse rawResponse:', e);
+        // Potentially fall back to extractedItems if parsing fails, or handle error
       }
-    } catch (error) {
-      console.error('Error processing transcript:', error)
-      // Fallback to simple parsing if API call fails
-      const items = text.split(/,|and/).map((item, index) => {
-        const trimmed = item.trim()
-        
-        // Try to match with usual groceries for better accuracy
-        let bestMatch = trimmed.toLowerCase()
-        if (usualGroceries) {
-          const usualItems = usualGroceries.split('\n').map(i => i.trim().toLowerCase())
-          // Find closest match if possible
-          const possibleMatches = usualItems.filter(usual => 
-            usual.includes(bestMatch) || bestMatch.includes(usual)
-          )
-          if (possibleMatches.length > 0) {
-            // Use the closest match by length
-            bestMatch = possibleMatches.sort((a, b) => Math.abs(a.length - bestMatch.length) - Math.abs(b.length - bestMatch.length))[0]
+    }
+    console.log('[DEBUG] Items to process from AI (from rawResponse):', JSON.stringify(itemsToProcessFromAI, null, 2));
+
+    setGroceryItems(prevItems => {
+      let updatedItems = [...prevItems];
+      for (const extractedItem of itemsToProcessFromAI) { // Iterate over items from rawResponse
+          const incomingItemNameStr = (extractedItem as any).item || ''; // Use .item as per rawResponse structure
+          const incomingItemNameLowerCase = incomingItemNameStr.toLowerCase();
+          const incomingItemQuantity = typeof (extractedItem as any).quantity === 'number' ? (extractedItem as any).quantity : 0;
+          const action = (extractedItem as any).action || 'add';
+          const itemIndex = updatedItems.findIndex(stateItem => stateItem.name.toLowerCase() === incomingItemNameLowerCase);
+          switch (action) {
+            case 'add':
+              if (itemIndex > -1) {
+                updatedItems[itemIndex].quantity += incomingItemQuantity;
+              } else if (incomingItemNameStr) {
+                updatedItems.push({ id: String(Date.now() + Math.random()), name: incomingItemNameStr, quantity: incomingItemQuantity });
+              }
+              break;
+            case 'remove':
+              if (itemIndex > -1) updatedItems.splice(itemIndex, 1);
+              break;
+            case 'modify':
+              if (itemIndex > -1) {
+                updatedItems[itemIndex].quantity = incomingItemQuantity;
+              } else if (incomingItemNameStr) {
+                updatedItems.push({ id: String(Date.now() + Math.random()), name: incomingItemNameStr, quantity: incomingItemQuantity });
+              }
+              break;
+            default:
+              if (incomingItemNameStr) console.warn(`Unknown action: ${action} for item: ${incomingItemNameStr}`);
           }
         }
-        
-        return {
-          id: String(index + 1),
-          name: bestMatch,
-          quantity: 1
+        const newGroceryList = updatedItems.filter(item => item.quantity > 0);
+        console.log('[DEBUG] New grocery list to be set:', JSON.stringify(newGroceryList, null, 2));
+        return newGroceryList;
+      });
+      if (rawResponse) {
+        setRawJsonResponse(typeof rawResponse === 'string' ? rawResponse : JSON.stringify(rawResponse, null, 2));
+      }
+      setErrorMessage(null); // Clear error on success
+    } catch (error) {
+      console.error('Error processing transcript:', error);
+      setErrorMessage(`Error processing transcript: ${error instanceof Error ? error.message : String(error)}`);
+      // Fallback logic from original code
+      const items = textToProcess.split(/,|and/).map((item, index) => {
+        const trimmed = item.trim(); let bestMatch = trimmed.toLowerCase();
+        if (usualGroceries) {
+          const usualItems = usualGroceries.split('\n').map(i => i.trim().toLowerCase());
+          const possibleMatches = usualItems.filter(usual => usual.includes(bestMatch) || bestMatch.includes(usual));
+          if (possibleMatches.length > 0) bestMatch = possibleMatches.sort((a, b) => Math.abs(a.length - bestMatch.length) - Math.abs(b.length - bestMatch.length))[0];
         }
-      }).filter(item => item.name.length > 0)
-      
-      setGroceryItems(items)
-      // Clear raw JSON on error
-      setRawJsonResponse("")
+        return { id: String(index + 1), name: bestMatch, quantity: 1 };
+      }).filter(item => item.name.length > 0);
+      setGroceryItems(items);
+      setRawJsonResponse("");
+    } finally {
+      setIsProcessing(false);
     }
-  }
-  
+  };
+
+  // Process transcript from voice input
+  const processTranscript = async (text: string) => {
+    setTranscript(text); // Update the main transcript state (last successfully processed from voice)
+    setManualTranscript(text); // Also set the manual transcript to allow immediate editing of voice results
+    await _processTextInternal(text);
+  };
+
+  // Process transcript from manual text input area
+  const handleProcessManualTranscript = async () => {
+    if (!manualTranscript.trim()) return; // Do nothing if textarea is empty
+    setTranscript(manualTranscript); // Update main transcript to reflect what's being processed
+    await _processTextInternal(manualTranscript);
+  };
+
   // Handler for when usual groceries change
   const handleUsualGroceriesChange = (groceries: string) => {
     setUsualGroceries(groceries)
@@ -345,6 +393,8 @@ export default function VoiceRecorder() {
   
   // Combined start recording function that selects the appropriate approach
   const startRecording = async () => {
+    setManualTranscript(""); // Clear manual transcript when starting voice recording
+    setErrorMessage(null);    // Clear any existing error messages
     try {
       // Clear previous state
       setErrorMessage(null)
@@ -575,7 +625,12 @@ export default function VoiceRecorder() {
       
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 w-full mb-8">
         <div className="flex flex-col space-y-4">
-          <TranscriptPanel transcript={transcript} />
+          <TranscriptPanel 
+            transcript={manualTranscript} 
+            onTranscriptChange={setManualTranscript} 
+            onProcessText={handleProcessManualTranscript} 
+            isProcessing={isProcessing} 
+          />
           
           {/* Show interim transcript for streaming mode */}
           {interimTranscript && (

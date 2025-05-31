@@ -164,11 +164,21 @@ export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
  * @param usualGroceries - Optional list of usual groceries to aid in recognition
  * @returns Object containing the extracted grocery items and the raw JSON response
  */
+// Define the structure of items as returned by the /api/parse_groceries endpoint
+export interface ApiGroceryItem {
+  item: string; // Name of the item as returned by AI
+  quantity: number;
+  action: 'add' | 'remove' | 'modify' | string; // AI can send various actions
+  id?: string; // Optional ID from AI
+  unit?: string; // Optional unit from AI
+  [key: string]: any; // Allow other dynamic properties from AI
+}
+
 export const processTranscriptClient = async (
   transcript: string, 
   usualGroceries?: string
 ): Promise<{
-  items: Array<{id: string; name: string; quantity: number}>;
+  items: ApiGroceryItem[];
   rawResponse: string;
 }> => {
   try {
@@ -189,23 +199,14 @@ export const processTranscriptClient = async (
     // Store the raw JSON response
     const rawResponse = JSON.stringify(data, null, 2);
     
-    let processedItems: Array<{id: string; name: string; quantity: number}> = [];
-    
-    if (data.items && Array.isArray(data.items)) {
-      // Format the items to match our expected structure
-      processedItems = data.items.map((item: any, index: number) => {
-        // Check if item has the expected properties
-        const itemName = item.item || item.name || '';
-        return {
-          id: String(index + 1),
-          name: typeof itemName === 'string' ? itemName.toLowerCase() : itemName,
-          quantity: item.quantity || 1
-        };
-      });
+    let originalApiItems: ApiGroceryItem[] = [];
+    if (data && data.items && Array.isArray(data.items)) {
+      originalApiItems = data.items;
     }
+    // The VoiceRecorder component will now handle parsing this raw structure from rawResponse
     
     return {
-      items: processedItems,
+      items: originalApiItems,
       rawResponse
     };
   } catch (error) {

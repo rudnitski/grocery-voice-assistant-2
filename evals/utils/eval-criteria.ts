@@ -23,14 +23,16 @@
  */
 
 /**
- * Represents a single grocery item with its quantity
+ * Represents a single grocery item with its quantity and optional action
  * 
  * @property item - The name of the grocery item (string)
  * @property quantity - The amount of the item (number)
+ * @property action - The action to perform: 'add', 'remove', or 'modify' (optional, defaults to 'add')
  */
 export interface GroceryItem {
   item: string;
   quantity: number;
+  action?: 'add' | 'remove' | 'modify';
 }
 
 /**
@@ -93,6 +95,7 @@ export function isValidJson(jsonString: string): boolean {
  * Verifies that an object has the expected structure for grocery items:
  * - Has an 'items' property that is an array
  * - Each item in the array has 'item' (string) and 'quantity' (number) properties
+ * - If present, 'action' must be one of: 'add', 'remove', or 'modify'
  * 
  * Implements evaluation criterion FR3.2.
  * 
@@ -100,21 +103,33 @@ export function isValidJson(jsonString: string): boolean {
  * @returns Boolean indicating whether the object conforms to the schema
  */
 export function conformsToSchema(obj: any): boolean {
-  if (!obj || typeof obj !== 'object') return false;
+  // Must be an object with an 'items' property that is an array
+  if (typeof obj !== 'object' || obj === null || !Array.isArray(obj.items)) {
+    return false;
+  }
   
-  // Check if it has an 'items' property that is an array
-  if (!Array.isArray(obj.items)) return false;
-  
-  // Check each item in the array
-  return obj.items.every((item: any) => {
-    // Each item should have 'item' and 'quantity' properties
-    if (!item || typeof item !== 'object') return false;
-    if (typeof item.item !== 'string') return false;
-    // Quantity must be a number (as per the updated requirements)
-    if (typeof item.quantity !== 'number') return false;
+  // Each item must have the required properties with the correct types
+  for (const item of obj.items) {
+    if (typeof item !== 'object' || item === null) {
+      return false;
+    }
     
-    return true;
-  });
+    if (typeof item.item !== 'string' || item.item.trim() === '') {
+      return false;
+    }
+    
+    if (typeof item.quantity !== 'number' || isNaN(item.quantity)) {
+      return false;
+    }
+    
+    // If action is present, it must be one of the allowed values
+    if (item.action !== undefined && 
+        !['add', 'remove', 'modify'].includes(item.action)) {
+      return false;
+    }
+  }
+  
+  return true;
 }
 
 /**

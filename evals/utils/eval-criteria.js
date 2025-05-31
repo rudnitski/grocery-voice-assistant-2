@@ -46,6 +46,7 @@ function isValidJson(jsonString) {
  * Verifies that an object has the expected structure for grocery items:
  * - Has an 'items' property that is an array
  * - Each item in the array has 'item' (string) and 'quantity' (number) properties
+ * - If present, 'action' must be one of: 'add', 'remove', or 'modify'
  *
  * Implements evaluation criterion FR3.2.
  *
@@ -53,23 +54,28 @@ function isValidJson(jsonString) {
  * @returns Boolean indicating whether the object conforms to the schema
  */
 function conformsToSchema(obj) {
-    if (!obj || typeof obj !== 'object')
+    // Must be an object with an 'items' property that is an array
+    if (typeof obj !== 'object' || obj === null || !Array.isArray(obj.items)) {
         return false;
-    // Check if it has an 'items' property that is an array
-    if (!Array.isArray(obj.items))
-        return false;
-    // Check each item in the array
-    return obj.items.every((item) => {
-        // Each item should have 'item' and 'quantity' properties
-        if (!item || typeof item !== 'object')
+    }
+    // Each item must have the required properties with the correct types
+    for (const item of obj.items) {
+        if (typeof item !== 'object' || item === null) {
             return false;
-        if (typeof item.item !== 'string')
+        }
+        if (typeof item.item !== 'string' || item.item.trim() === '') {
             return false;
-        // Quantity must be a number (as per the updated requirements)
-        if (typeof item.quantity !== 'number')
+        }
+        if (typeof item.quantity !== 'number' || isNaN(item.quantity)) {
             return false;
-        return true;
-    });
+        }
+        // If action is present, it must be one of the allowed values
+        if (item.action !== undefined &&
+            !['add', 'remove', 'modify'].includes(item.action)) {
+            return false;
+        }
+    }
+    return true;
 }
 /**
  * Compare LLM output with expected output and calculate accuracy metrics

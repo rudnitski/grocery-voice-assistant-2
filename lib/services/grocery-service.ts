@@ -1,3 +1,32 @@
+/**
+ * Grocery Service - Enhanced with List Modification Support
+ * 
+ * This service provides functionality for extracting grocery items from user transcripts
+ * and handling various operations on grocery lists (add, remove, modify).
+ * 
+ * Key Features:
+ * 1. Extract grocery items with their quantities and actions from natural language
+ * 2. Process list modifications through various action types:
+ *    - add: Add new items or increase quantity of existing items
+ *    - remove: Remove items from the list
+ *    - modify: Change the quantity of existing items
+ * 3. Support for conversational patterns where users might add items and then change
+ *    their mind in the same utterance
+ * 4. Multi-language support (English, Russian, etc.)
+ * 
+ * Usage Example:
+ * ```typescript
+ * // 1. Extract grocery items with actions from a transcript
+ * const newItems = await extractGroceryItems("We need milk and bread, actually remove milk");
+ * 
+ * // 2. Process these actions against an existing grocery list
+ * const updatedList = processGroceryActions(currentGroceryList, newItems);
+ * ```
+ * 
+ * The system will automatically handle the appropriate actions based on the natural
+ * language processing of the user's intentions.
+ */
+
 import { makeChatCompletion, parseJsonResponse } from './openai-service';
 import { GROCERY_EXTRACTION_PROMPT } from '../prompts/grocery-prompts';
 
@@ -28,7 +57,7 @@ const GROCERY_RESPONSE_FORMAT = {
       "properties": {
         "items": {
           "type": "array",
-          "description": "A list of items with their quantities.",
+          "description": "A list of items with their quantities and actions.",
           "items": {
             "type": "object",
             "properties": {
@@ -39,11 +68,17 @@ const GROCERY_RESPONSE_FORMAT = {
               "quantity": {
                 "type": "number",
                 "description": "The quantity of the item."
+              },
+              "action": {
+                "type": "string",
+                "enum": ["add", "remove", "modify"],
+                "description": "The action to perform on the item: add, remove, or modify."
               }
             },
             "required": [
               "item",
-              "quantity"
+              "quantity",
+              "action"
             ],
             "additionalProperties": false
           }
@@ -61,12 +96,94 @@ const GROCERY_RESPONSE_FORMAT = {
  * Extract grocery items from a transcript using OpenAI
  * @param transcript - The transcript to extract items from
  * @param usualGroceries - The user's usual grocery list
- * @returns An array of grocery items with their quantities
+ * @returns An array of grocery items with their quantities and actions
  */
+export interface GroceryItemWithAction {
+  item: string;
+  quantity: number;
+  action?: 'add' | 'remove' | 'modify';
+}
+
+/**
+ * Process grocery items based on their action types (add, remove, modify)
+ * @param currentList - The current grocery list
+ * @param newItems - New items with actions to be applied
+ * @returns The updated grocery list after applying all actions
+ */
+export const processGroceryActions = (
+  currentList: Array<GroceryItemWithAction>,
+  newItems: Array<GroceryItemWithAction>
+): Array<GroceryItemWithAction> => {
+  // Create a copy of the current list to avoid mutating the original
+  const updatedList = [...currentList];
+  
+  // Process each new item based on its action
+  newItems.forEach(newItem => {
+    const action = newItem.action || 'add'; // Default to 'add' if not specified
+    
+    // Find if the item already exists in the list (case-insensitive comparison)
+    const existingItemIndex = updatedList.findIndex(
+      item => item.item.toLowerCase() === newItem.item.toLowerCase()
+    );
+    
+    switch (action) {
+      case 'add':
+        // If item exists, update its quantity, otherwise add it
+        if (existingItemIndex >= 0) {
+          updatedList[existingItemIndex].quantity += newItem.quantity;
+          logger.info(`Updated quantity for existing item: ${newItem.item}`, {
+            oldQuantity: updatedList[existingItemIndex].quantity - newItem.quantity,
+            newQuantity: updatedList[existingItemIndex].quantity
+          });
+        } else {
+          updatedList.push({
+            ...newItem,
+            action: 'add' // Ensure action is explicitly set
+          });
+          logger.info(`Added new item: ${newItem.item}`, { quantity: newItem.quantity });
+        }
+        break;
+        
+      case 'remove':
+        // Remove the item if it exists
+        if (existingItemIndex >= 0) {
+          updatedList.splice(existingItemIndex, 1);
+          logger.info(`Removed item: ${newItem.item}`);
+        } else {
+          logger.info(`Attempted to remove non-existent item: ${newItem.item}`);
+        }
+        break;
+        
+      case 'modify':
+        // Modify the quantity of an existing item
+        if (existingItemIndex >= 0) {
+          logger.info(`Modified quantity for item: ${newItem.item}`, {
+            oldQuantity: updatedList[existingItemIndex].quantity,
+            newQuantity: newItem.quantity
+          });
+          updatedList[existingItemIndex].quantity = newItem.quantity;
+        } else {
+          // If item doesn't exist, add it as a new item
+          updatedList.push({
+            ...newItem,
+            action: 'add' // Change action to 'add' since we're adding it
+          });
+          logger.info(`Added new item (from modify action): ${newItem.item}`, { quantity: newItem.quantity });
+        }
+        break;
+        
+      default:
+        logger.error(`Unknown action type: ${action}`, { item: newItem });
+    }
+  });
+  
+  return updatedList;
+};
+
 export const extractGroceryItems = async (
   transcript: string, 
   usualGroceries: string = ''
-): Promise<Array<{item: string; quantity: number}>> => {
+): Promise<Array<GroceryItemWithAction>> => {
   if (!transcript || typeof transcript !== 'string') {
     logger.error('Invalid transcript provided', { transcript });
     throw new Error('Invalid transcript provided');
@@ -99,7 +216,7 @@ export const extractGroceryItems = async (
       const parsedResult = parseJsonResponse(result);
       
       // Determine actual items array (handle different response formats)
-      let items: Array<{item: string; quantity: number}>;
+      let items: Array<GroceryItemWithAction>;
       
       if (Array.isArray(parsedResult)) {
         // Direct array format
@@ -119,7 +236,13 @@ export const extractGroceryItems = async (
         } else {
           // Last resort: if it's an object with item/quantity, wrap it in an array
           if (parsedResult.item && (parsedResult.quantity !== undefined)) {
-            items = [parsedResult];
+            // Default to 'add' action if not specified
+            const item: GroceryItemWithAction = {
+              item: parsedResult.item,
+              quantity: parsedResult.quantity,
+              action: parsedResult.action || 'add'
+            };
+            items = [item];
             logger.info('Response is a single item object, wrapping in array');
           } else {
             items = [];
@@ -127,6 +250,12 @@ export const extractGroceryItems = async (
           }
         }
       }
+      
+      // Ensure all items have an action (default to 'add')
+      items = items.map(item => ({
+        ...item,
+        action: item.action || 'add'
+      }));
       
       // Log each item for better visibility
       logger.info(`Found ${items.length} grocery items:`);

@@ -102,19 +102,24 @@ If you need more control, you can run the individual commands:
 
 ## Test Cases
 
-The test cases are stored in `evals/data/grocery_test_data.jsonl`. Each line in this file represents a single test case with the following structure:
+The test cases are stored in `evals/data/grocery_test_data.jsonl`. Each line in this file represents a single test case with the following structure, now including an `action` field for each item:
 
 ```json
 {
   "item": {
-    "utterance": "Две пачки овсяного печенья, пять яблок.",
-    "expect_json": "{\"items\": [{\"item\": \"овсяное печенье\", \"quantity\": 2}, {\"item\": \"яблоко\", \"quantity\": 5}]}"
+    "utterance": "Две пачки овсяного печенья, пять яблок. Удали овсяное печенье и сделай яблок три штуки.",
+    "expect_json": "{\"items\": [{\"item\": \"овсяное печенье\", \"quantity\": 0, \"action\": \"remove\"}, {\"item\": \"яблоко\", \"quantity\": 3, \"action\": \"modify\"}]}"
   }
 }
 ```
 
-The test cases include:
-- Basic grocery extraction
+The `action` field can be `"add"`, `"remove"`, or `"modify"`.
+
+The test cases cover a variety of scenarios, including:
+- Basic grocery extraction (additions)
+- Item removal
+- Item quantity modification
+- Complex utterances involving multiple actions
 - Misspelled or mispronounced items
 - Ambiguous items requiring usual groceries for resolution
 - Alternative forms or plurals
@@ -125,7 +130,7 @@ The test cases include:
 The evaluation uses the following criteria:
 
 1. **JSON Validity**: Checks if the LLM output is valid JSON
-2. **Schema Conformance**: Verifies that the output has the expected structure
+2. **Schema Conformance**: Verifies that the output has the expected structure. This includes ensuring each item has an `item` (string) and `quantity` (number), and if an `action` field is present, it must be one of `'add'`, `'remove'`, or `'modify'`.
 3. **Item Matching**: Checks if all expected items are present (case-insensitive)
 4. **Quantity Matching**: Verifies that quantities match for found items
 5. **Overall Accuracy**: Calculates an overall score based on correct items, wrong quantities, and extra/missing items
