@@ -10,6 +10,7 @@
  * - JSON validity checking
  * - Schema conformance verification
  * - Item matching with case-insensitive comparison
+ * - Semantic matching with OpenAI's GPT-4o for natural language understanding
  * - Quantity accuracy verification
  * - Comprehensive scoring and reporting
  *
@@ -20,6 +21,7 @@ exports.isValidJson = isValidJson;
 exports.conformsToSchema = conformsToSchema;
 exports.evaluateGroceryOutput = evaluateGroceryOutput;
 exports.formatEvaluationResults = formatEvaluationResults;
+const semantic_comparison_1 = require("./semantic-comparison");
 /**
  * Check if a string is valid JSON
  *
@@ -83,6 +85,7 @@ function conformsToSchema(obj) {
  * This function performs the core evaluation by comparing the actual LLM output
  * against the expected output. It checks for:
  * - Item matching (FR3.4): Are all expected items present? (case-insensitive)
+ * - Semantic matching: Are items semantically equivalent even if named differently?
  * - Quantity matching (FR3.4): Do the quantities match for matched items?
  * - Extra items: Does the LLM output contain items not in the expected output?
  * - Missing items: Are any expected items missing from the LLM output?
@@ -91,10 +94,16 @@ function conformsToSchema(obj) {
  *
  * @param actual The actual output from the LLM (should conform to GroceryItems schema)
  * @param expected The expected output from the test case
+ * @param options Additional options for evaluation
+ * @param options.enableSemanticComparison Whether to use semantic comparison (default: true)
+ * @param options.exactMatchesOnly If true, only use exact string matching (default: false)
+ * @param options.usualGroceries The user's usual groceries for additional context in semantic matching
  * @returns Detailed evaluation results including scores and item lists
  */
-function evaluateGroceryOutput(actual, expected) {
-    // Default results structure
+async function evaluateGroceryOutput(actual, expected, options = {}) {
+    // Process options with defaults
+    const { enableSemanticComparison = true, exactMatchesOnly = false, usualGroceries = '' } = options;
+    // Default results structure with semantic fields
     const results = {
         isValidJson: true, // Assume this check was done before calling this function
         conformsToSchema: conformsToSchema(actual),
@@ -111,7 +120,16 @@ function evaluateGroceryOutput(actual, expected) {
             totalExpectedItems: expected.items.length,
             totalActualItems: actual && actual.items ? actual.items.length : 0,
             matchScore: 0
-        }
+        },
+        // Add semantic match information
+        semanticMatches: {
+            items: [],
+            count: 0,
+            confidenceScores: {},
+            reasonings: {}
+        },
+        semanticEnabled: enableSemanticComparison,
+        exactMatchesOnly: exactMatchesOnly
     };
     // If it doesn't conform to the schema, return early with minimal evaluation
     if (!results.conformsToSchema) {
@@ -126,30 +144,103 @@ function evaluateGroceryOutput(actual, expected) {
     actual.items.forEach((item) => {
         actualMap.set(item.item.toLowerCase(), item.quantity);
     });
-    // Check for correct, extra, and missing items
-    for (const [item, expectedQuantity] of expectedMap.entries()) {
-        if (actualMap.has(item)) {
-            const actualQuantity = actualMap.get(item);
+    // Create lists to track unmatched items for semantic comparison
+    const unmatchedExpectedItems = new Map(expectedMap);
+    const unmatchedActualItems = new Map();
+    // First pass: check for exact matches to avoid unnecessary API calls
+    for (const [expectedItem, expectedQuantity] of expectedMap.entries()) {
+        if (actualMap.has(expectedItem)) {
+            // Exact match found
+            const actualQuantity = actualMap.get(expectedItem);
             if (actualQuantity === expectedQuantity) {
-                results.details.correctItems.push(item);
+                results.details.correctItems.push(expectedItem);
             }
             else {
                 results.details.incorrectItems.push({
-                    item,
+                    item: expectedItem,
                     expected: expectedQuantity,
                     actual: actualQuantity
                 });
             }
-        }
-        else {
-            results.details.missingItems.push(item);
+            // Remove matched items from the unmatched lists
+            unmatchedExpectedItems.delete(expectedItem);
         }
     }
-    // Check for extra items in the actual output
-    for (const item of actualMap.keys()) {
-        if (!expectedMap.has(item)) {
-            results.details.extraItems.push(item);
+    // Create map of unmatched actual items with original case-preserved names
+    actual.items.forEach((item) => {
+        const itemLower = item.item.toLowerCase();
+        if (!expectedMap.has(itemLower) || unmatchedExpectedItems.has(itemLower)) {
+            unmatchedActualItems.set(itemLower, {
+                item: item.item, // Preserve original case
+                quantity: item.quantity
+            });
         }
+    });
+    // Second pass: if semantic matching is enabled, try to match remaining items semantically
+    if (enableSemanticComparison && !exactMatchesOnly && unmatchedExpectedItems.size > 0 && unmatchedActualItems.size > 0) {
+        // For each unmatched expected item, try to find a semantic match in unmatched actual items
+        for (const [expectedItemLower, expectedQuantity] of unmatchedExpectedItems.entries()) {
+            // Skip further processing if already matched
+            if (!unmatchedExpectedItems.has(expectedItemLower))
+                continue;
+            // Get the original expected item name from the test case for better prompting
+            const originalExpectedItem = expected.items.find(item => item.item.toLowerCase() === expectedItemLower)?.item || expectedItemLower;
+            // Try to find a semantic match among unmatched actual items
+            const semanticMatches = [];
+            // Process all potential semantic matches
+            await Promise.all(Array.from(unmatchedActualItems.keys()).map(async (actualItemLower) => {
+                const actualItemData = unmatchedActualItems.get(actualItemLower);
+                const originalActualItem = actualItemData.item;
+                // Compare items semantically
+                const result = await (0, semantic_comparison_1.compareItemsSemantically)(originalActualItem, originalExpectedItem, usualGroceries);
+                // If it's a match with sufficient confidence, add to potential matches
+                if ((0, semantic_comparison_1.meetsConfidenceThreshold)(result)) {
+                    semanticMatches.push({
+                        actualItem: actualItemLower,
+                        result
+                    });
+                }
+            }));
+            // If we found semantic matches, use the one with highest confidence
+            if (semanticMatches.length > 0) {
+                // Sort matches by confidence score (highest first)
+                semanticMatches.sort((a, b) => b.result.confidence - a.result.confidence);
+                const bestMatch = semanticMatches[0];
+                // Get actual item data
+                const actualItemData = unmatchedActualItems.get(bestMatch.actualItem);
+                const actualQuantity = actualItemData.quantity;
+                // Store the semantic match information
+                results.semanticMatches.items.push(expectedItemLower);
+                results.semanticMatches.confidenceScores[expectedItemLower] = bestMatch.result.confidence;
+                results.semanticMatches.reasonings[expectedItemLower] = bestMatch.result.reasoning;
+                // Check if quantities match
+                if (actualQuantity === expectedQuantity) {
+                    // Add to correct items, but mark it as a semantic match
+                    results.details.correctItems.push(expectedItemLower);
+                }
+                else {
+                    // Quantities don't match
+                    results.details.incorrectItems.push({
+                        item: expectedItemLower,
+                        expected: expectedQuantity,
+                        actual: actualQuantity
+                    });
+                }
+                // Remove matched items from unmatched lists
+                unmatchedExpectedItems.delete(expectedItemLower);
+                unmatchedActualItems.delete(bestMatch.actualItem);
+            }
+        }
+        // Update semantic match count
+        results.semanticMatches.count = results.semanticMatches.items.length;
+    }
+    // Add remaining unmatched expected items to missing items
+    for (const missingItem of unmatchedExpectedItems.keys()) {
+        results.details.missingItems.push(missingItem);
+    }
+    // Add remaining unmatched actual items to extra items
+    for (const [actualItemLower, actualItemData] of unmatchedActualItems.entries()) {
+        results.details.extraItems.push(actualItemLower);
     }
     // Set boolean flags based on the comparisons
     results.hasCorrectItems = results.details.correctItems.length > 0;
@@ -159,6 +250,8 @@ function evaluateGroceryOutput(actual, expected) {
     // Calculate match score (percentage of correct items)
     const totalCorrect = results.details.correctItems.length;
     const totalExpected = expected.items.length;
+    const semanticMatches = results.semanticMatches.count;
+    // Update match score based on exact and semantic matches
     results.details.matchScore = totalExpected > 0
         ? totalCorrect / totalExpected
         : 0;
@@ -178,7 +271,18 @@ function evaluateGroceryOutput(actual, expected) {
         // Penalize for extra and incorrect items, but not below 0
         const extraItemsPenalty = Math.min(0.15, (results.details.extraItems.length / Math.max(1, totalExpected)) * 0.15);
         const incorrectItemsPenalty = Math.min(0.15, (results.details.incorrectItems.length / Math.max(1, totalExpected)) * 0.15);
+        // Calculate the final score
         results.score = Math.max(0, Math.min(1, correctItemsScore - extraItemsPenalty - incorrectItemsPenalty));
+        // Add a small semantic matching bonus (max 10%) for proper use of semantic understanding
+        // Only if semantic matching is enabled and we found some semantic matches
+        if (enableSemanticComparison && semanticMatches > 0) {
+            // Calculate the ratio of semantic matches to total correct items
+            const semanticRatio = semanticMatches / Math.max(1, totalCorrect);
+            // Apply a bonus (maximum of 0.1 or 10% of the score) based on semantic matches
+            const semanticBonus = Math.min(0.1, semanticRatio * 0.1);
+            // Add the bonus to the score, not exceeding 1.0
+            results.score = Math.min(1.0, results.score + semanticBonus);
+        }
     }
     return results;
 }
@@ -205,6 +309,33 @@ function formatEvaluationResults(results, actual, expected) {
     // Basic checks with color
     output += `Valid JSON: ${results.isValidJson ? '\x1b[32mYes\x1b[0m' : '\x1b[31mNo\x1b[0m'}\n`;
     output += `Conforms to Schema: ${results.conformsToSchema ? '\x1b[32mYes\x1b[0m' : '\x1b[31mNo\x1b[0m'}\n`;
+    // Add semantic matching information if available
+    const extendedResults = results;
+    if ('semanticMatches' in extendedResults) {
+        output += `\nSemantic Matching: ${extendedResults.semanticEnabled ? '\x1b[32mEnabled\x1b[0m' : '\x1b[33mDisabled\x1b[0m'}\n`;
+        if (extendedResults.semanticEnabled && !extendedResults.exactMatchesOnly) {
+            // Show semantic match statistics
+            const semanticCount = extendedResults.semanticMatches.count;
+            output += `Semantic Matches: ${semanticCount > 0 ? '\x1b[32m' : '\x1b[33m'}${semanticCount}\x1b[0m items\n`;
+            // Show details of semantic matches if there are any
+            if (semanticCount > 0) {
+                output += '\n\x1b[1m\x1b[44m\x1b[37m === Semantic Match Details === \x1b[0m\n';
+                for (const item of extendedResults.semanticMatches.items) {
+                    const confidence = extendedResults.semanticMatches.confidenceScores[item];
+                    const reasoning = extendedResults.semanticMatches.reasonings[item];
+                    // Format confidence with color based on confidence level
+                    const confidenceColor = confidence >= 0.9 ? '\x1b[32m' : // Green for high confidence
+                        confidence >= 0.8 ? '\x1b[33m' : // Yellow for medium confidence
+                            '\x1b[31m'; // Red for low confidence
+                    output += `\x1b[1m"${item}"\x1b[0m matched with ${confidenceColor}${(confidence * 100).toFixed(1)}%\x1b[0m confidence\n`;
+                    output += `  Reasoning: ${reasoning}\n\n`;
+                }
+            }
+        }
+        else if (extendedResults.exactMatchesOnly) {
+            output += `\x1b[33mExact matches only mode: Semantic matching not applied\x1b[0m\n`;
+        }
+    }
     // Side-by-side comparison of expected vs actual results
     if (expected && actual) {
         output += '\n\x1b[1m\x1b[44m\x1b[37m === Side-by-Side Comparison === \x1b[0m\n';
@@ -225,18 +356,52 @@ function formatEvaluationResults(results, actual, expected) {
             let comparison = '';
             let itemColor = '';
             if (i < expectedItems.length && i < actualItems.length) {
-                if (expectedItems[i].item.toLowerCase() === actualItems[i].item.toLowerCase() &&
-                    expectedItems[i].quantity === actualItems[i].quantity) {
-                    comparison = ' \x1b[32m✓ MATCH\x1b[0m';
+                const expectedLower = expectedItems[i].item.toLowerCase();
+                const actualLower = actualItems[i].item.toLowerCase();
+                const expectedQty = expectedItems[i].quantity;
+                const actualQty = actualItems[i].quantity;
+                // Check if this is a semantic match
+                const extendedResults = results;
+                const isSemanticMatch = 'semanticMatches' in extendedResults &&
+                    extendedResults.semanticMatches.items.includes(expectedLower);
+                if (expectedLower === actualLower && expectedQty === actualQty) {
+                    // Exact match with matching quantities
+                    comparison = ' \x1b[32m✓ EXACT MATCH\x1b[0m';
                     itemColor = '\x1b[32m'; // Green for match
                 }
-                else if (expectedItems[i].item.toLowerCase() === actualItems[i].item.toLowerCase()) {
+                else if (isSemanticMatch && expectedQty === actualQty) {
+                    // Semantic match with matching quantities
+                    const confidence = extendedResults.semanticMatches.confidenceScores[expectedLower];
+                    comparison = ` \x1b[36m✓ SEMANTIC MATCH (${(confidence * 100).toFixed(0)}%)\x1b[0m`;
+                    itemColor = '\x1b[36m'; // Cyan for semantic match
+                }
+                else if (expectedLower === actualLower) {
                     comparison = ' \x1b[33m⚠️ QUANTITY MISMATCH\x1b[0m';
                     itemColor = '\x1b[33m'; // Yellow for quantity mismatch
                 }
+                else if (isSemanticMatch) {
+                    // Semantic match but quantity mismatch
+                    const confidence = extendedResults.semanticMatches.confidenceScores[expectedLower];
+                    comparison = ` \x1b[33m⚠️ SEMANTIC MATCH (${(confidence * 100).toFixed(0)}%) BUT QUANTITY MISMATCH\x1b[0m`;
+                    itemColor = '\x1b[33m'; // Yellow for quantity mismatch
+                }
                 else {
-                    comparison = ' \x1b[31m❌ ITEM MISMATCH\x1b[0m';
-                    itemColor = '\x1b[31m'; // Red for item mismatch
+                    // Check if this is a case where different qualifiers should be treated as distinct items
+                    // For example, "red apples" vs "green apples" should be considered different
+                    // This aligns with the requirement that items with different qualifiers should be distinct
+                    const expectedWords = expectedLower.split(' ');
+                    const actualWords = actualLower.split(' ');
+                    // See if one item is a subset of the other (e.g., "apples" vs "red apples")
+                    const isSubset = expectedWords.every(word => actualWords.includes(word)) ||
+                        actualWords.every(word => expectedWords.includes(word));
+                    if (isSubset) {
+                        comparison = ' \x1b[31m✗ QUALIFIER DIFFERENCE\x1b[0m';
+                        itemColor = '\x1b[31m'; // Red for mismatch but highlight it's due to qualifiers
+                    }
+                    else {
+                        comparison = ' \x1b[31m✗ MISMATCH\x1b[0m';
+                        itemColor = '\x1b[31m'; // Red for mismatch
+                    }
                 }
             }
             // Number each line and add colors to items

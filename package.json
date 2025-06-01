@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "eval:compile": "tsc --esModuleInterop --target es2020 --module commonjs evals/scripts/run-grocery-eval.ts evals/utils/eval-criteria.ts",
+    "eval:compile": "tsc --esModuleInterop --target es2020 --module commonjs evals/scripts/run-grocery-eval.ts evals/utils/eval-criteria.ts evals/utils/semantic-comparison.ts",
     "eval:run": "node evals/scripts/run-grocery-eval.js",
     "eval": "./evals/scripts/run-grocery-eval.sh",
     "ui:home": "source ./load-env.sh && node tests/run-ui-home.mjs"

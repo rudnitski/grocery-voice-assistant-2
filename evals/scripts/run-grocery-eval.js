@@ -75,12 +75,15 @@ const DEFAULT_USUAL_GROCERIES = ``;
  * Supports the following options:
  * --usual-groceries-path, -u: Path to a file containing the usual groceries list
  * --no-usual-groceries: Run without using a usual groceries list
+ * --enable-semantic-comparison: Enable semantic comparison for evaluation
  *
  * @returns Configuration options for the evaluation
  */
 function parseArgs() {
     const args = process.argv.slice(2);
-    const options = {};
+    const options = {
+        noUsualGroceries: false,
+    };
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
         if (arg === '--usual-groceries-path' || arg === '-u') {
@@ -179,6 +182,14 @@ async function main() {
     const options = parseArgs();
     // Get the usual groceries list based on configuration
     const usualGroceries = getUsualGroceries(options);
+    // Display configuration information
+    console.log('\n\x1b[1m\x1b[44m\x1b[37m === Configuration === \x1b[0m');
+    console.log(`Semantic Comparison: \x1b[32mEnabled\x1b[0m`); // Always enabled
+    console.log(`Usual Groceries: ${options.noUsualGroceries ? '\x1b[33mDisabled\x1b[0m' : '\x1b[32mEnabled\x1b[0m'}`);
+    if (options.usualGroceriesPath) {
+        console.log(`Using custom usual groceries from: ${options.usualGroceriesPath}`);
+    }
+    console.log(''); // Empty line for better readability
     // Statistics to track success/failure rates
     const stats = {
         total: testCases.length,
@@ -207,8 +218,12 @@ async function main() {
             console.log('LLM Result:', JSON.stringify(llmResult, null, 2));
             // Format LLM result to match GroceryItems interface
             const actualOutput = { items: llmResult };
-            // Evaluate the LLM output against the expected output
-            const evaluation = (0, eval_criteria_1.evaluateGroceryOutput)(actualOutput, testCase.expectedOutput);
+            // Evaluate the LLM output against the expected output with semantic matching always enabled
+            const evaluation = await (0, eval_criteria_1.evaluateGroceryOutput)(actualOutput, testCase.expectedOutput, {
+                enableSemanticComparison: true, // Always enable semantic comparison
+                exactMatchesOnly: false, // Allow semantic matches
+                usualGroceries: usualGroceries // Pass usual groceries for context
+            });
             // Create structured output to collect in stats
             const passed = evaluation.score >= 0.5; // Threshold for passing
             // Record this evaluation in our stats for the summary table
