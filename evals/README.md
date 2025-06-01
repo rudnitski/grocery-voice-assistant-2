@@ -11,6 +11,7 @@ The evaluation framework is designed to assess how well the LLM extracts grocery
 - **Test Data Management**: Uses JSONL files for easy test case creation and extension
 - **LLM Invocation**: Uses the same prompt and schema as the main application
 - **Usual Groceries Support**: Tests the impact of the usual groceries feature on accuracy
+- **Semantic Item Comparison**: Uses OpenAI GPT-4o to intelligently match items that are semantically similar but textually different
 - **Comprehensive Evaluation**: Implements multiple evaluation criteria with detailed metrics
 - **Detailed Reporting**: Provides both per-test-case and aggregate results
 
@@ -24,6 +25,7 @@ The evaluation framework is designed to assess how well the LLM extracts grocery
     - `grocery-eval-run.json`: Configuration for OpenAI Evals (deprecated)
   - `utils/`: Utility functions for evaluation
     - `eval-criteria.ts`: Evaluation criteria and metrics
+    - `semantic-comparison.ts`: Semantic grocery item comparison service using OpenAI GPT-4o
 
 ## Usage
 
@@ -135,6 +137,36 @@ The evaluation uses the following criteria:
 4. **Quantity Matching**: Verifies that quantities match for found items
 5. **Overall Accuracy**: Calculates an overall score based on correct items, wrong quantities, and extra/missing items
 
+## Semantic Item Comparison
+
+The evaluation framework includes an advanced semantic comparison system that goes beyond exact string matching to identify when grocery items are semantically equivalent. This feature uses OpenAI's GPT-4o model to understand the context and meaning of grocery items.
+
+### How Semantic Comparison Works
+
+1. **Initial Matching**: The system first attempts exact string matching (case-insensitive) for maximum efficiency
+2. **Semantic Analysis**: If no exact match is found, the system uses GPT-4o to compare items semantically
+3. **Context Awareness**: The comparison includes the user's usual groceries list to provide context about preferred brands and specific items
+4. **Confidence Scoring**: Each semantic match includes a confidence score (0.0-1.0) and reasoning
+
+### Examples of Semantic Matches
+
+- "chocolate milk" ↔ "milk chocolate" (word order variation)
+- "green apples" ↔ "apples" (qualifier matching)
+- "куриное филе" ↔ "филе куриное" (Russian word order)
+- "творожок" ↔ "творожок «савушкин»" (brand context from usual groceries)
+
+### Configuration
+
+- **Confidence Threshold**: Default 0.75 (can be adjusted in semantic-comparison.ts)
+- **Caching**: Results are cached to minimize API calls and improve performance
+- **Timeout Settings**: Cache timeout can be configured for different testing scenarios
+
+### Performance Considerations
+
+- The system uses intelligent caching to minimize OpenAI API calls
+- Exact matches bypass the API entirely for optimal performance
+- Cache statistics are available for monitoring API usage during evaluations
+
 ## Interpreting Results
 
 The evaluation script produces a detailed report with:
@@ -171,7 +203,8 @@ The evaluation criteria are defined in `evals/utils/eval-criteria.ts`. You can m
 This evaluation framework depends on:
 - The core grocery service (`lib/services/grocery-service.ts`)
 - The grocery prompt (`lib/prompts/grocery-prompts.ts`)
-- OpenAI API access for LLM invocation
+- The semantic comparison service (`evals/utils/semantic-comparison.ts`)
+- OpenAI API access for LLM invocation and semantic comparison
 
 ---
 

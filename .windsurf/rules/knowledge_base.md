@@ -108,6 +108,16 @@ Key scripts from `package.json`:
   - The test definition is in `tests/ui-home.yaml` and executed by `tests/run-ui-home.mjs`.
   - Requires `BROWSERBASE_API_KEY` and `BROWSERBASE_PROJECT_ID` environment variables.
 
+- **Semantic Grocery Item Comparison:**
+  - Advanced evaluation system using OpenAI GPT-4o for intelligent matching of grocery items beyond exact string matching.
+  - Implemented in `evals/utils/semantic-comparison.ts` with comprehensive caching and performance optimization.
+  - Supports contextual matching using the user's usual groceries list for brand preferences and specific items.
+  - Features confidence scoring (0.0-1.0), detailed reasoning, and configurable thresholds (default: 0.75).
+  - Examples: "chocolate milk" ↔ "milk chocolate", "green apples" ↔ "apples", "творожок" ↔ "творожок «савушкин»".
+  - Integrated with evaluation framework (`eval-criteria.ts`) while maintaining backward compatibility.
+  - Includes intelligent caching to minimize API calls and comprehensive unit/integration tests (29 tests).
+  - Documented in `evals/README.md` with detailed configuration options and usage examples.
+
 ## 6. Future Considerations & Maintenance
 
 - This document should be updated as new features are added, or the architecture changes.
