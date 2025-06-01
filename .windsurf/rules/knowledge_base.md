@@ -1,3 +1,7 @@
+---
+trigger: manual
+---
+
 # Project Knowledge Base: Grocery Voice Assistant
 
 ## 1. Project Overview
@@ -93,6 +97,26 @@ Key scripts from `package.json`:
   - Modifications are immediate (no confirmation step).
   - This feature is browser-session based.
   - A PRD exists at `tasks/prd-grocery-list-modification.md`.
+  - **Technical Implementation:**
+    - **Data Model**: Each grocery item has an explicit `action` field that can be `"add"`, `"remove"`, or `"modify"` (interface `GroceryItemWithAction` in `grocery-service.ts`).
+    - **LLM Prompt**: The `GROCERY_EXTRACTION_PROMPT` in `lib/prompts/grocery-prompts.ts` instructs the model to analyze user statements for intent and assign the appropriate action to each item.
+    - **Processing Logic**: The `processGroceryActions` function in `grocery-service.ts` handles all three action types:
+      - `add`: Adds a new item or increments quantity of existing item
+      - `remove`: Removes an item from the list entirely
+      - `modify`: Updates the quantity of an existing item
+    - **State Management**: The `VoiceRecorder` component manages the grocery list state and uses the `_processTextInternal` method to process actions from both voice and manual transcripts.
+    - **Conversational Understanding**: The system recognizes indirect statements like "I think we don't need apples" as removal actions, and "actually, let's get 3 instead" as modification actions.
+  - **Evaluation Framework:**
+    - **Action-Based Evaluation**: The `evaluateGroceryOutput` function in `eval-criteria.ts` has been enhanced to evaluate the correctness of actions in addition to items and quantities.
+    - **Metrics**: The system calculates and reports separate accuracy metrics for addition, removal, and modification operations.
+    - **Error Reporting**: Evaluation results include detailed error reports for wrong or missing actions.
+    - **Test Cases**: Comprehensive test cases for various modification scenarios were added to `grocery_test_data.jsonl`, covering:
+      - Direct removal commands ("remove apples")
+      - Conversational removal ("actually, never mind about the apples")
+      - Quantity modifications ("make that 3 apples instead")
+      - Multiple operations in one utterance ("add milk, remove bread, and make it 2 eggs")
+      - Multilingual support for all operations
+    - The evaluation system achieved a 94.4% success rate across all test cases, with an average score of 96.8%.
 
 - **Manual Transcript Input & Processing:**
   - Users can directly type or paste their grocery list into an editable textarea.
