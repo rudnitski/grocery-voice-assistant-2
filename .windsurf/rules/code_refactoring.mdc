@@ -1,0 +1,198 @@
+# Architectural Refactoring Plan: Grocery Voice Assistant
+
+## 1. Executive Summary & Goals
+The primary objective of this plan is to refactor the frontend architecture of the Grocery Voice Assistant to enhance modularity, testability, and long-term maintainability. The current architecture, while functional, concentrates a significant amount of business logic, state management, and UI orchestration into a single large component (`VoiceRecorder.tsx`), making it difficult to scale and maintain.
+
+This refactoring will focus on the following key goals:
+-   **Decompose the "God Component":** Break down the monolithic `VoiceRecorder.tsx` into smaller, reusable, and single-responsibility custom hooks.
+-   **Improve State Management:** Encapsulate related state and logic, moving away from scattered `useState` calls to more organized, domain-specific hooks.
+-   **Increase Code Quality & Consistency:** Eliminate code duplication and establish consistent patterns for cross-cutting concerns like logging.
+
+## 2. Current Situation Analysis
+The project is a modern Next.js application that leverages the OpenAI API for its core voice-to-list functionality. The backend (Next.js API Routes) and the evaluation suite (`/evals`) are well-structured.
+
+The primary architectural pain points are concentrated in the frontend:
+-   **Monolithic Core Component:** `VoiceRecorder.tsx` acts as a "god component." It manages audio recording, multiple transcript states, the main grocery list, processing status, and error handling. This violates the Single Responsibility Principle, making the component difficult to reason about, test, and modify.
+-   **Fragmented State Management:** State is managed via numerous `useState` hooks within `VoiceRecorder.tsx`. Logic that operates on this state (e.g., `_processTextInternal`) is tightly coupled to the component, reducing reusability.
+-   **Code Duplication:** There are duplicate hook files (`use-mobile.tsx`, `use-toast.ts`) and CSS files (`globals.css`) in different directories, leading to confusion and maintenance overhead.
+-   **Inconsistent Utilities:** Core functionalities like logging are implemented ad-hoc within API routes, lacking a centralized, reusable solution.
+
+## 3. Proposed Solution / Refactoring Strategy
+The proposed strategy is to refactor the frontend by abstracting logic and state out of the `VoiceRecorder.tsx` component and into a set of cohesive, custom React hooks. This follows the principle of "Separation of Concerns" and will make the codebase significantly more modular and maintainable.
+
+### 3.1. High-Level Design / Architectural Overview
+
+The refactoring will transition the architecture from a monolithic component model to a more organized, hook-based model.
+
+#### Before Refactoring:
+```mermaid
+graph TD
+    subgraph VoiceRecorder.tsx (God Component)
+        A[State: isRecording]
+        B[State: groceryItems]
+        C[State: transcript]
+        D[State: manualTranscript]
+        E[State: isProcessing]
+        F[Logic: start/stop Recording]
+        G[Logic: _processTextInternal]
+        H[Logic: handleManualTranscript]
+    end
+    I[UI: TranscriptPanel]
+    J[UI: GroceryList]
+    K[Service: openai-service.ts]
+    
+    VoiceRecorder.tsx --> I
+    VoiceRecorder.tsx --> J
+    VoiceRecorder.tsx --> K
+```
+*Description: Currently, `VoiceRecorder.tsx` holds all state and business logic, passing props down to UI components and calling services directly.*
+
+#### After Refactoring:
+```mermaid
+graph TD
+    subgraph Custom Hooks
+        hook_audio[useAudioRecorder]
+        hook_grocery[useGroceryList]
+        hook_processor[useTranscriptProcessor]
+    end
+
+    subgraph VoiceRecorder.tsx (Orchestrator)
+        direction LR
+        L[UI Rendering]
+    end
+
+    subgraph UI Components
+        I[TranscriptPanel]
+        J[GroceryList]
+    end
+
+    subgraph Services
+        K[Service: openai-service.ts]
+        M[Service: grocery-service.ts]
+    end
+
+    hook_audio --> VoiceRecorder.tsx
+    hook_grocery --> VoiceRecorder.tsx
+    hook_processor --> VoiceRecorder.tsx
+
+    hook_processor -- calls --> M
+    M -- calls --> K
+
+    VoiceRecorder.tsx --> I
+    VoiceRecorder.tsx --> J
+```
+*Description: The refactored `VoiceRecorder.tsx` becomes a lean component that primarily orchestrates the flow of data from custom hooks to UI components. Each hook encapsulates a specific domain of logic and state.*
+
+### 3.2. Key Components / Modules
+
+#### New Custom Hooks
+1.  **`useAudioRecorder`**:
+    -   **Responsibility:** Manages all logic and state related to audio recording.
+    -   **Exports:** `isRecording`, `startRecording`, `stopRecording`, `audioBlob`, `recordingError`.
+    -   **Source Logic:** This will abstract the audio recording logic (MediaRecorder setup, state, error handling) from `VoiceRecorder.tsx`.
+
+2.  **`useGroceryList`**:
+    -   **Responsibility:** Manages the `groceryItems` array state and all mutations to it.
+    -   **Exports:** `groceryItems`, `updateItemQuantity`, `processGroceryActions` (or a similar method to apply parsed items), `clearList`.
+    -   **Source Logic:** This will encapsulate the `groceryItems` state and the client-side list update logic (currently part of `_processTextInternal` and `processGroceryActions` in `grocery-service.ts`).
+
+3.  **`useTranscriptProcessor`**:
+    -   **Responsibility:** Manages transcript state and orchestrates the call to the grocery parsing service.
+    -   **Exports:** `transcript`, `manualTranscript`, `setManualTranscript`, `isProcessing`, `processText`, `errorMessage`.
+    -   **Source Logic:** Manages `transcript`, `manualTranscript`, `isProcessing`, and `errorMessage` states. Its `processText` function will call the backend API via `processTranscriptClient`.
+
+#### Refactored `VoiceRecorder.tsx`
+This component will be significantly simplified. It will:
+1.  Invoke the new custom hooks (`useAudioRecorder`, `useGroceryList`, `useTranscriptProcessor`).
+2.  Connect the hooks. For example, the `onSuccess` callback from `useAudioRecorder` would trigger the `processText` function from `useTranscriptProcessor`.
+3.  Pass state and handlers from the hooks as props to the child UI components (`GroceryList`, `TranscriptPanel`, etc.).
+4.  Contain minimal state, focusing solely on UI orchestration.
+
+### 3.3. Detailed Action Plan / Phases
+
+#### Phase 1: Project Cleanup and Consolidation
+-   **Objective(s):** Remove code duplication and establish consistent patterns. This is low-risk and provides immediate quality improvements.
+-   **Priority:** High
+
+-   **Task 1.1: Deduplicate Hooks**
+    -   **Rationale/Goal:** Remove duplicate `use-mobile.tsx` and `use-toast.ts` files.
+    -   **Estimated Effort:** S
+    -   **Deliverable/Criteria for Completion:** Decide on a single location (e.g., `/hooks`). Delete the duplicate files and update all imports to point to the canonical version.
+-   **Task 1.2: Consolidate Stylesheets**
+    -   **Rationale/Goal:** Remove the unused `styles/globals.css` to avoid confusion.
+    -   **Estimated Effort:** S
+    -   **Deliverable/Criteria for Completion:** Verify `app/globals.css` is the one in use and delete `styles/globals.css`.
+-   **Task 1.3: Create Shared Logger Utility**
+    -   **Rationale/Goal:** Centralize logging logic for consistent logging across the application.
+    -   **Estimated Effort:** S
+    -   **Deliverable/Criteria for Completion:** Create `lib/utils/logger.ts` that exports a simple logger instance. Update API routes in `app/api/` to use this shared logger.
+
+#### Phase 2: Core Logic Abstraction into Hooks
+-   **Objective(s):** Extract state and business logic from `VoiceRecorder.tsx` into single-responsibility custom hooks.
+-   **Priority:** High
+
+-   **Task 2.1: Create `useGroceryList` Hook**
+    -   **Rationale/Goal:** Encapsulate all grocery list state and manipulation logic.
+    -   **Estimated Effort:** M
+    -   **Deliverable/Criteria for Completion:** A new file `hooks/use-grocery-list.ts` exists. It manages the `groceryItems` state and contains the logic for adding, removing, and modifying items, abstracted from `VoiceRecorder.tsx` and `lib/services/grocery-service.ts` (`processGroceryActions`). The hook should be unit-testable.
+-   **Task 2.2: Create `useAudioRecorder` Hook**
+    -   **Rationale/Goal:** Isolate audio recording machinery.
+    -   **Estimated Effort:** M
+    -   **Deliverable/Criteria for Completion:** A new file `hooks/use-audio-recorder.ts` exists. It manages all `AudioRecorderState`, feature detection, and stream handling, abstracted from `VoiceRecorder.tsx`. It provides a simple API (`isRecording`, `startRecording`, `stopRecording`).
+-   **Task 2.3: Create `useTranscriptProcessor` Hook**
+    -   **Rationale/Goal:** Manage the processing flow from text to a list of actions.
+    -   **Estimated Effort:** S
+    -   **Deliverable/Criteria for Completion:** A new file `hooks/use-transcript-processor.ts` exists. It manages `transcript`, `manualTranscript`, `isProcessing`, and `errorMessage` states. Its primary function, `processText`, will call the backend API.
+
+#### Phase 3: Component Refactoring and Integration
+-   **Objective(s):** Reassemble the UI using the newly created hooks, simplifying the `VoiceRecorder` component.
+-   **Priority:** High (Depends on Phase 2)
+
+-   **Task 3.1: Refactor `VoiceRecorder.tsx`**
+    -   **Rationale/Goal:** Convert the "god component" into a lean orchestrator.
+    -   **Estimated Effort:** M
+    -   **Deliverable/Criteria for Completion:** `VoiceRecorder.tsx` is refactored to use `useAudioRecorder`, `useGroceryList`, and `useTranscriptProcessor`. The component should have significantly fewer lines of code and primarily focus on wiring hooks together and rendering UI components.
+-   **Task 3.2: Full Application Validation**
+    -   **Rationale/Goal:** Ensure the refactored application is fully functional and regression-free.
+    -   **Estimated Effort:** L
+    -   **Deliverable/Criteria for Completion:**
+        -   All existing evaluation tests in `/evals` pass successfully.
+        -   All UI tests in `/tests` pass successfully.
+        -   A full manual test of all user flows (voice input, manual input, list modifications) is completed and passes.
+
+### 3.4. Data Model Changes
+-   No changes to the core data models (`GroceryItem`, `Measurement`, etc.) are required for this architectural refactoring.
+
+### 3.5. API Design / Interface Changes
+-   No changes to the public API contract of `/api/transcribe` or `/api/parse_groceries` are required.
+
+## 4. Key Considerations & Risk Mitigation
+### 4.1. Technical Risks & Challenges
+-   **Risk:** Introducing regressions in the complex, interconnected logic of `VoiceRecorder.tsx` during the refactoring process.
+    -   **Mitigation:** The project has an excellent, comprehensive evaluation suite (`/evals`). This suite must be run frequently during the refactoring of `useGroceryList` and `useTranscriptProcessor` to ensure the core NLP processing remains correct.
+-   **Risk:** Incorrectly managing state transitions between the new hooks.
+    -   **Mitigation:** The introduction of `useTranscriptProcessor` as an intermediary is designed to manage this. The action plan is phased to allow for incremental changes and validation.
+
+### 4.2. Dependencies
+-   **Internal:** Phase 3 is critically dependent on the successful completion of Phase 2. Tasks within Phase 2 can be developed in parallel, but their integration into the main component must happen after they are complete.
+
+### 4.3. Non-Functional Requirements (NFRs) Addressed
+-   **Maintainability:** Significantly improved. Logic is separated into domains, making it easier for developers to locate, understand, and modify code without unintended side effects.
+-   **Testability:** Custom hooks are pure functions or self-contained stateful logic units, which are much easier to unit test in isolation compared to a large, multi-faceted UI component.
+-   **Scalability (Codebase):** The modular architecture makes it much simpler to add new features. For example, adding a new type of input (e.g., from an image) would involve creating a new hook (`useImageProcessor`) without heavily modifying existing ones.
+
+## 5. Success Metrics / Validation Criteria
+-   **Code Quality:** The line count and cyclomatic complexity of `VoiceRecorder.tsx` are reduced by at least 50%.
+-   **Regression Testing:** 100% of tests in the existing evaluation suite (`npm run eval`) and UI tests (`npm run ui:home`) pass after the refactoring is complete.
+-   **Functionality:** All existing application features (voice recording, manual text entry, list management, "usual groceries" context) are fully functional, as verified by manual testing.
+-   **Developer Experience:** (Qualitative) The development team finds it easier and faster to implement future changes related to grocery list management.
+
+## 6. Assumptions Made
+-   The development team is proficient with React Hooks and modern frontend patterns.
+-   The existing evaluation suite is a reliable safety net for the core backend and NLP logic.
+-   The primary goal is to improve the internal quality and structure of the codebase for long-term health, without altering external functionality.
+
+## 7. Open Questions / Areas for Further Investigation
+-   **Future State Management:** For the current complexity, custom hooks are sufficient. If the application grows to include user accounts, multiple lists, or more shared state, should a dedicated global state management library (e.g., Zustand, Jotai) be considered as the next step after this refactoring?
+-   **Service vs. Hook Logic:** The `processGroceryActions` function in `lib/services/grocery-service.ts` contains client-side logic for updating a list. Should this be moved entirely into the `useGroceryList` hook?
+    -   **Recommendation:** Yes, this logic directly manipulates client-side state and belongs in the `useGroceryList` hook. The `grocery-service.ts` should be reserved for logic that interacts with external services or performs complex, pure business logic transformations.

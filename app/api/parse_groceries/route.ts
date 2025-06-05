@@ -1,17 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { extractGroceryItems } from '@/lib/services/grocery-service';
-
-// Simple logger for tracking API requests
-const logger = {
-  info: (message: string, data?: any) => {
-    const timestamp = new Date().toISOString();
-    console.log(`[INFO] ${timestamp} - ${message}`, data ? data : '');
-  },
-  error: (message: string, error: any) => {
-    const timestamp = new Date().toISOString();
-    console.error(`[ERROR] ${timestamp} - ${message}`, error);
-  }
-};
+import logger from '@/lib/utils/logger';
 
 export async function POST(request: NextRequest) {
   logger.info('Received API request', { url: request.url });
@@ -21,10 +10,10 @@ export async function POST(request: NextRequest) {
     logger.info('Request body received', { requestBody });
     
     const { transcript, usualGroceries } = requestBody;
-    console.log("📝 Received transcript:", transcript);
+    logger.debug("📝 Received transcript:", transcript);
     
     if (usualGroceries) {
-      console.log("🛒 Received usual groceries list", { length: usualGroceries.length });
+      logger.debug("🛒 Received usual groceries list", { length: usualGroceries.length });
     }
     
     if (!transcript || typeof transcript !== 'string') {

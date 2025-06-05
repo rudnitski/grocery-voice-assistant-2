@@ -1,17 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getOpenAIClient } from '@/lib/services/openai-service';
-
-// Simple logger for tracking API requests
-const logger = {
-  info: (message: string, data?: any) => {
-    const timestamp = new Date().toISOString();
-    console.log(`[INFO] ${timestamp} - ${message}`, data ? data : '');
-  },
-  error: (message: string, error: any) => {
-    const timestamp = new Date().toISOString();
-    console.error(`[ERROR] ${timestamp} - ${message}`, error);
-  }
-};
+import logger from '@/lib/utils/logger';
 
 export async function POST(request: NextRequest) {
   logger.info('Received audio transcription request');
