@@ -8,6 +8,7 @@ import GroceryList from "./grocery-list"
 import UsualGroceries from "./usual-groceries"
 import { mockTranscript, mockGroceryItems } from "@/lib/mock-data"
 import { processTranscriptClient, transcribeAudio } from "@/lib/services/openai-service"
+import { Measurement } from "@/lib/types/grocery-types"
 import { Card } from "./ui/card"
 import { Separator } from "./ui/separator"
 
@@ -54,7 +55,7 @@ export default function VoiceRecorder() {
   const [transcript, setTranscript] = useState("") // Stores the last successfully processed transcript (voice or manual)
   const [manualTranscript, setManualTranscript] = useState("") // Live text in the editable textarea for manual input/editing
   const [interimTranscript, setInterimTranscript] = useState("")
-  const [groceryItems, setGroceryItems] = useState<Array<{ id: string; name: string; quantity: number }>>([])  
+  const [groceryItems, setGroceryItems] = useState<Array<{ id: string; name: string; quantity: number; measurement?: Measurement }>>([])  
   const [useMockData, setUseMockData] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [usualGroceries, setUsualGroceries] = useState("")
@@ -116,13 +117,26 @@ export default function VoiceRecorder() {
           const incomingItemNameLowerCase = incomingItemNameStr.toLowerCase();
           const incomingItemQuantity = typeof (extractedItem as any).quantity === 'number' ? (extractedItem as any).quantity : 0;
           const action = (extractedItem as any).action || 'add';
+          const measurement = (extractedItem as any).measurement || null;
           const itemIndex = updatedItems.findIndex(stateItem => stateItem.name.toLowerCase() === incomingItemNameLowerCase);
           switch (action) {
             case 'add':
               if (itemIndex > -1) {
                 updatedItems[itemIndex].quantity += incomingItemQuantity;
+                // Update measurement if provided
+                if (measurement) {
+                  updatedItems[itemIndex].measurement = measurement;
+                }
               } else if (incomingItemNameStr) {
-                updatedItems.push({ id: String(Date.now() + Math.random()), name: incomingItemNameStr, quantity: incomingItemQuantity });
+                const newItem = { 
+                  id: String(Date.now() + Math.random()), 
+                  name: incomingItemNameStr, 
+                  quantity: incomingItemQuantity
+                };
+                if (measurement) {
+                  (newItem as any).measurement = measurement;
+                }
+                updatedItems.push(newItem);
               }
               break;
             case 'remove':
@@ -131,8 +145,20 @@ export default function VoiceRecorder() {
             case 'modify':
               if (itemIndex > -1) {
                 updatedItems[itemIndex].quantity = incomingItemQuantity;
+                // Update measurement if provided
+                if (measurement) {
+                  updatedItems[itemIndex].measurement = measurement;
+                }
               } else if (incomingItemNameStr) {
-                updatedItems.push({ id: String(Date.now() + Math.random()), name: incomingItemNameStr, quantity: incomingItemQuantity });
+                const newItem = { 
+                  id: String(Date.now() + Math.random()), 
+                  name: incomingItemNameStr, 
+                  quantity: incomingItemQuantity
+                };
+                if (measurement) {
+                  (newItem as any).measurement = measurement;
+                }
+                updatedItems.push(newItem);
               }
               break;
             default:

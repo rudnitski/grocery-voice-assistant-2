@@ -25,15 +25,15 @@ describe('Evaluation System with Semantic Comparison', () => {
     test('should correctly evaluate with exact matches', async () => {
       const actual: GroceryItems = { 
         items: [
-          { item: 'apples', quantity: 3, action: 'add' },
-          { item: 'milk', quantity: 1, action: 'add' }
+          { item: 'apples', quantity: 3, action: 'add', measurement: undefined },
+          { item: 'milk', quantity: 1, action: 'add', measurement: undefined }
         ] 
       };
       
       const expected: GroceryItems = { 
         items: [
-          { item: 'apples', quantity: 3, action: 'add' },
-          { item: 'milk', quantity: 1, action: 'add' }
+          { item: 'apples', quantity: 3, action: 'add', measurement: undefined },
+          { item: 'milk', quantity: 1, action: 'add', measurement: undefined }
         ] 
       };
       
@@ -63,15 +63,15 @@ describe('Evaluation System with Semantic Comparison', () => {
       
       const actual: GroceryItems = { 
         items: [
-          { item: 'tomato sauce', quantity: 1, action: 'add' },
-          { item: 'milk', quantity: 1, action: 'add' }
+          { item: 'tomato sauce', quantity: 1, action: 'add', measurement: undefined },
+          { item: 'milk', quantity: 1, action: 'add', measurement: undefined }
         ] 
       };
       
       const expected: GroceryItems = { 
         items: [
-          { item: 'pasta sauce', quantity: 1, action: 'add' },
-          { item: 'milk', quantity: 1, action: 'add' }
+          { item: 'pasta sauce', quantity: 1, action: 'add', measurement: undefined },
+          { item: 'milk', quantity: 1, action: 'add', measurement: undefined }
         ] 
       };
       
@@ -295,15 +295,15 @@ describe('Evaluation System with Semantic Comparison', () => {
       
       const actual: GroceryItems = { 
         items: [
-          { item: 'tomato sauce', quantity: 1, action: 'add' },
-          { item: 'milk', quantity: 1, action: 'add' }
+          { item: 'tomato sauce', quantity: 2, action: 'add', measurement: undefined },
+          { item: 'milk', quantity: 1, action: 'add', measurement: undefined }
         ] 
       };
       
       const expected: GroceryItems = { 
         items: [
-          { item: 'pasta sauce', quantity: 1, action: 'add' },
-          { item: 'milk', quantity: 1, action: 'add' }
+          { item: 'pasta sauce', quantity: 2, action: 'add', measurement: undefined },
+          { item: 'milk', quantity: 1, action: 'add', measurement: undefined }
         ] 
       };
       

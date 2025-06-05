@@ -137,6 +137,61 @@ Key scripts from `package.json`:
   - Implemented in `evals/utils/semantic-comparison.ts` with comprehensive caching and performance optimization.
   - Supports contextual matching using the user's usual groceries list for brand preferences and specific items.
   - Features confidence scoring (0.0-1.0), detailed reasoning, and configurable thresholds (default: 0.75).
+
+- **Multilingual Measurement Parsing:**
+  - Comprehensive system for parsing, normalizing, and formatting measurements in grocery items.
+  - Supports multiple languages (English, Spanish, French, German, Italian) with language-specific unit handling.
+  - Handles metric units (g, kg, mL, L), imperial units (oz, lb, fl oz, cup), and count units.
+  - Features fractional values, different decimal separators, and various unit formats.
+  - Implemented in `lib/utils/measurement-utils.ts` with extensive test coverage.
+
+## 6. Measurement Parsing System
+
+### 6.1 Core Components
+
+- **Data Model (`lib/types/grocery-types.ts`):**
+  - `Measurement` interface: `{ value: number; unit: MeasurementUnit; type?: MeasurementType }`
+  - Enums for measurement types (`WEIGHT`, `VOLUME`, `COUNT`) and units
+  - Unit normalization maps for multilingual support
+  - Display format templates for different units
+
+- **Parsing Utilities (`lib/utils/measurement-utils.ts`):**
+  - `parseMeasurement`: Extracts value and unit from strings like "500g" or "2 litros"
+  - `normalizeUnit`: Maps various unit representations to standard units
+  - `formatMeasurement`: Formats measurements for display
+  - `normalizeMeasurement`: Converts to more appropriate units (e.g., 1000g → 1kg)
+  - `combineMeasurements`: Combines measurements of the same type
+  - Conversion utilities for different measurement systems
+
+### 6.2 Multilingual Support
+
+- **Language-Specific Features:**
+  - Support for unit variations with language suffixes (e.g., `grammes_fr`, `litri_it`)
+  - Special handling for plural forms in different languages
+  - Italian plural handling (e.g., "litro" → "litri")
+  - French plural handling (e.g., "gramme" → "grammes")
+  - Comprehensive normalization map with entries for all supported languages
+
+- **Parsing Capabilities:**
+  - Flexible regex patterns to handle various formats
+  - Support for different decimal separators (dot and comma)
+  - Handling of fractions and special Unicode fraction characters
+  - Text between numbers and units (e.g., "2 large cups")
+  - Detection and rejection of mixed units (e.g., "1 lb 4 oz")
+
+### 6.3 Testing and Limitations
+
+- **Test Coverage:**
+  - Unit tests for core parsing functions
+  - Dedicated multilingual test suite
+  - Integration with evaluation framework
+  - Edge case testing for unusual formats
+
+- **Known Limitations (documented in `.windsurf/rules/measurement-limitations.md`):**
+  - No support for mixed units
+  - Limited support for ranges
+  - Language-specific pluralization challenges
+  - Some ambiguity in abbreviated units
   - Examples: "chocolate milk" ↔ "milk chocolate", "green apples" ↔ "apples", "творожок" ↔ "творожок «савушкин»".
   - Integrated with evaluation framework (`eval-criteria.ts`) while maintaining backward compatibility.
   - Includes intelligent caching to minimize API calls and comprehensive unit/integration tests (29 tests).

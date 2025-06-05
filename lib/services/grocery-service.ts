@@ -28,6 +28,7 @@
  */
 
 import { makeChatCompletion, parseJsonResponse } from './openai-service';
+import { GroceryItemWithMeasurement, Measurement } from '../types/grocery-types';
 import { GROCERY_EXTRACTION_PROMPT } from '../prompts/grocery-prompts';
 
 // Simple logger for tracking API requests
@@ -48,47 +49,51 @@ const logger = {
  * The response format for grocery extraction
  */
 const GROCERY_RESPONSE_FORMAT = {
-  "type": "json_schema",
+  "type": "json_object",
   "json_schema": {
-    "name": "inventory",
-    "strict": true,
-    "schema": {
-      "type": "object",
-      "properties": {
+    "type": "object",
+    "properties": {
+      "items": {
+        "type": "array",
         "items": {
-          "type": "array",
-          "description": "A list of items with their quantities and actions.",
-          "items": {
-            "type": "object",
-            "properties": {
-              "item": {
-                "type": "string",
-                "description": "The name of the item."
-              },
-              "quantity": {
-                "type": "number",
-                "description": "The quantity of the item."
-              },
-              "action": {
-                "type": "string",
-                "enum": ["add", "remove", "modify"],
-                "description": "The action to perform on the item: add, remove, or modify."
-              }
+          "type": "object",
+          "properties": {
+            "item": {
+              "type": "string",
+              "description": "The name of the item."
             },
-            "required": [
-              "item",
-              "quantity",
-              "action"
-            ],
-            "additionalProperties": false
-          }
+            "quantity": {
+              "type": "number",
+              "description": "The quantity of the item."
+            },
+            "action": {
+              "type": "string",
+              "enum": ["add", "remove", "modify"],
+              "description": "The action to perform on the item: add, remove, or modify."
+            },
+            "measurement": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "number"
+                    },
+                    "unit": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["value", "unit"]
+                },
+                { "type": "null" }
+              ]
+            }
+          },
+          "required": ["item", "quantity", "action", "measurement"]
         }
-      },
-      "required": [
-        "items"
-      ],
-      "additionalProperties": false
-    }
+      }
+    },
+    "required": ["items"]
   }
 };
 
@@ -102,6 +107,7 @@ export interface GroceryItemWithAction {
   item: string;
   quantity: number;
   action?: 'add' | 'remove' | 'modify';
+  measurement?: Measurement;
 }
 
 /**
@@ -166,7 +172,8 @@ export const processGroceryActions = (
           // If item doesn't exist, add it as a new item
           updatedList.push({
             ...newItem,
-            action: 'add' // Change action to 'add' since we're adding it
+            action: 'add', // Change action to 'add' since we're adding it
+            measurement: newItem.measurement // Keep measurement as is (Measurement | undefined)
           });
           logger.info(`Added new item (from modify action): ${newItem.item}`, { quantity: newItem.quantity });
         }
@@ -215,15 +222,15 @@ export const extractGroceryItems = async (
     try {
       const parsedResult = parseJsonResponse(result);
       
-      // Determine actual items array (handle different response formats)
+      // With the updated schema, we expect a direct array response
       let items: Array<GroceryItemWithAction>;
       
       if (Array.isArray(parsedResult)) {
-        // Direct array format
+        // Direct array format (expected with new schema)
         items = parsedResult;
         logger.info('Response is a direct array');
       } else if (parsedResult.items && Array.isArray(parsedResult.items)) {
-        // Object with items array
+        // Object with items array (for backward compatibility)
         items = parsedResult.items;
         logger.info('Response is an object with items array');
       } else {
@@ -236,11 +243,12 @@ export const extractGroceryItems = async (
         } else {
           // Last resort: if it's an object with item/quantity, wrap it in an array
           if (parsedResult.item && (parsedResult.quantity !== undefined)) {
-            // Default to 'add' action if not specified
+            // Default to 'add' action if not specified and null measurement if not present
             const item: GroceryItemWithAction = {
               item: parsedResult.item,
               quantity: parsedResult.quantity,
-              action: parsedResult.action || 'add'
+              action: parsedResult.action || 'add',
+              measurement: parsedResult.measurement || undefined
             };
             items = [item];
             logger.info('Response is a single item object, wrapping in array');
@@ -251,10 +259,11 @@ export const extractGroceryItems = async (
         }
       }
       
-      // Ensure all items have an action (default to 'add')
+      // Ensure all items have an action (default to 'add') and measurement (undefined if not present)
       items = items.map(item => ({
         ...item,
-        action: item.action || 'add'
+        action: item.action || 'add',
+        measurement: item.measurement || undefined
       }));
       
       // Log each item for better visibility

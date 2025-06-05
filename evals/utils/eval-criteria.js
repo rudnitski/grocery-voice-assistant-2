@@ -19,6 +19,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.isValidJson = isValidJson;
 exports.conformsToSchema = conformsToSchema;
+exports.evaluateActions = evaluateActions;
 exports.evaluateGroceryOutput = evaluateGroceryOutput;
 exports.formatEvaluationResults = formatEvaluationResults;
 const semantic_comparison_1 = require("./semantic-comparison");
@@ -78,6 +79,112 @@ function conformsToSchema(obj) {
         }
     }
     return true;
+}
+/**
+ * Evaluate action-based operations
+ *
+ * This function evaluates how well the LLM handles different action types:
+ * - add: Adding new items to the list
+ * - remove: Removing items from the list
+ * - modify: Changing quantities of existing items
+ *
+ * @param actual The actual output from the LLM
+ * @param expected The expected output from the test case
+ * @param semanticMatches Map of semantically matched items
+ * @returns Detailed action evaluation results
+ */
+function evaluateActions(actual, expected, semanticMatches = new Map()) {
+    const results = {
+        totalActionAccuracy: 0,
+        addAccuracy: 0,
+        removeAccuracy: 0,
+        modifyAccuracy: 0,
+        actionCounts: {
+            expected: { add: 0, remove: 0, modify: 0 },
+            actual: { add: 0, remove: 0, modify: 0 },
+            correct: { add: 0, remove: 0, modify: 0 }
+        },
+        actionErrors: {
+            wrongAction: [],
+            missingAction: []
+        }
+    };
+    // Count expected actions
+    expected.items.forEach(item => {
+        const action = item.action || 'add';
+        results.actionCounts.expected[action]++;
+    });
+    // Count actual actions
+    actual.items.forEach(item => {
+        const action = item.action || 'add';
+        results.actionCounts.actual[action]++;
+    });
+    // Create maps for easier lookup (case-insensitive)
+    const expectedMap = new Map();
+    expected.items.forEach(item => {
+        expectedMap.set(item.item.toLowerCase(), item);
+    });
+    const actualMap = new Map();
+    actual.items.forEach(item => {
+        actualMap.set(item.item.toLowerCase(), item);
+    });
+    // Evaluate each expected item
+    expected.items.forEach(expectedItem => {
+        const expectedKey = expectedItem.item.toLowerCase();
+        const expectedAction = expectedItem.action || 'add';
+        // Check if we have this item in actual (either exact match or semantic match)
+        let actualItem;
+        let actualKey;
+        if (actualMap.has(expectedKey)) {
+            actualItem = actualMap.get(expectedKey);
+            actualKey = expectedKey;
+        }
+        else if (semanticMatches.has(expectedKey)) {
+            const semanticMatch = semanticMatches.get(expectedKey);
+            actualItem = actualMap.get(semanticMatch.toLowerCase());
+            actualKey = semanticMatch.toLowerCase();
+        }
+        if (actualItem) {
+            const actualAction = actualItem.action || 'add';
+            // Check if action matches
+            if (expectedAction === actualAction) {
+                // Check if quantity also matches for correct action evaluation
+                if (expectedItem.quantity === actualItem.quantity) {
+                    results.actionCounts.correct[expectedAction]++;
+                }
+            }
+            else {
+                results.actionErrors.wrongAction.push({
+                    item: expectedItem.item,
+                    expectedAction,
+                    actualAction
+                });
+            }
+        }
+        else {
+            // Item is missing entirely
+            results.actionErrors.missingAction.push({
+                item: expectedItem.item,
+                expectedAction
+            });
+        }
+    });
+    // Calculate accuracies
+    const calculateAccuracy = (correct, expected) => {
+        return expected > 0 ? (correct / expected) * 100 : 100;
+    };
+    results.addAccuracy = calculateAccuracy(results.actionCounts.correct.add, results.actionCounts.expected.add);
+    results.removeAccuracy = calculateAccuracy(results.actionCounts.correct.remove, results.actionCounts.expected.remove);
+    results.modifyAccuracy = calculateAccuracy(results.actionCounts.correct.modify, results.actionCounts.expected.modify);
+    // Calculate total accuracy
+    const totalCorrect = results.actionCounts.correct.add +
+        results.actionCounts.correct.remove +
+        results.actionCounts.correct.modify;
+    const totalExpected = results.actionCounts.expected.add +
+        results.actionCounts.expected.remove +
+        results.actionCounts.expected.modify;
+    results.totalActionAccuracy = calculateAccuracy(totalCorrect, totalExpected);
+    return results;
 }
 /**
  * Compare LLM output with expected output and calculate accuracy metrics
@@ -255,6 +362,9 @@ async function evaluateGroceryOutput(actual, expected, options = {}) {
     results.details.matchScore = totalExpected > 0
         ? totalCorrect / totalExpected
         : 0;
+    // Evaluate action-based operations
+    const actionResults = evaluateActions(actual, expected, new Map(results.semanticMatches.items.map(item => [item, item])));
+    results.actionResults = actionResults;
     // Overall score calculation
     // If all items match perfectly and there are no extra or incorrect items, score is 100%
     // Otherwise, calculate based on weights and penalties
@@ -334,6 +444,27 @@ function formatEvaluationResults(results, actual, expected) {
         }
         else if (extendedResults.exactMatchesOnly) {
             output += `\x1b[33mExact matches only mode: Semantic matching not applied\x1b[0m\n`;
+        }
+    }
+    // Add action-based operation evaluation results
+    if ('actionResults' in extendedResults) {
+        const actionResults = extendedResults.actionResults;
+        output += `\nAction-Based Operations:\n`;
+        output += `  Total Action Accuracy: ${actionResults.totalActionAccuracy.toFixed(1)}%\n`;
+        output += `  Add Accuracy: ${actionResults.addAccuracy.toFixed(1)}%\n`;
+        output += `  Remove Accuracy: ${actionResults.removeAccuracy.toFixed(1)}%\n`;
+        output += `  Modify Accuracy: ${actionResults.modifyAccuracy.toFixed(1)}%\n`;
+        if (actionResults.actionErrors.wrongAction.length > 0) {
+            output += `\nWrong Actions:\n`;
+            actionResults.actionErrors.wrongAction.forEach(error => {
+                output += `  - ${error.item}: Expected ${error.expectedAction}, Got ${error.actualAction}\n`;
+            });
+        }
+        if (actionResults.actionErrors.missingAction.length > 0) {
+            output += `\nMissing Actions:\n`;
+            actionResults.actionErrors.missingAction.forEach(error => {
+                output += `  - ${error.item}: Expected ${error.expectedAction}\n`;
+            });
         }
     }
     // Side-by-side comparison of expected vs actual results

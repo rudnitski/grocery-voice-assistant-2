@@ -217,6 +217,7 @@ async function main() {
             ]);
             console.log('LLM Result:', JSON.stringify(llmResult, null, 2));
             // Format LLM result to match GroceryItems interface
+            // The extractGroceryItems now returns a direct array, so we need to wrap it in an object
             const actualOutput = { items: llmResult };
             // Evaluate the LLM output against the expected output with semantic matching always enabled
             const evaluation = await (0, eval_criteria_1.evaluateGroceryOutput)(actualOutput, testCase.expectedOutput, {

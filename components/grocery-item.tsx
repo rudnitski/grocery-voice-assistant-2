@@ -2,9 +2,11 @@
 
 import { Minus, Plus } from "lucide-react"
 import { useState } from "react"
+import { Measurement } from "../lib/types/grocery-types"
+import { formatMeasurement } from "../lib/utils/measurement-utils"
 
 interface GroceryItemProps {
-  item: { id: string; name: string; quantity: number }
+  item: { id: string; name: string; quantity: number; measurement?: Measurement }
   updateQuantity: (id: string, change: number) => void
 }
 
@@ -18,9 +20,15 @@ export default function GroceryItem({ item, updateQuantity }: GroceryItemProps) 
       onMouseLeave={() => setIsHovered(false)}
     >
       <div className="flex items-center gap-3">
-        <div className="w-8 h-8 flex items-center justify-center bg-gradient-to-r from-pink-500/20 to-rose-500/20 rounded-xl text-pink-400 font-medium">
-          {item.quantity}
-        </div>
+        {item.measurement ? (
+          <div className="px-2 py-1 bg-blue-500/20 rounded-lg text-blue-400 text-xs font-medium">
+            {formatMeasurement(item.measurement)}
+          </div>
+        ) : (
+          <div className="w-8 h-8 flex items-center justify-center bg-gradient-to-r from-pink-500/20 to-rose-500/20 rounded-xl text-pink-400 font-medium">
+            {item.quantity}
+          </div>
+        )}
         <span className="font-medium capitalize text-white">{item.name}</span>
       </div>
 

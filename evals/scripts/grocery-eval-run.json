@@ -34,9 +34,21 @@
           "type": "object",
           "properties": {
             "item": { "type": "string" },
-            "quantity": { "type": "number" }
+            "quantity": { "type": "number" },
+            "action": { 
+              "type": "string",
+              "enum": ["add", "remove", "modify"]
+            },
+            "measurement": {
+              "type": ["object", "null"],
+              "properties": {
+                "value": { "type": "number" },
+                "unit": { "type": "string" }
+              },
+              "required": ["value", "unit"]
+            }
           },
-          "required": ["item", "quantity"]
+          "required": ["item", "quantity", "measurement", "action"]
         }
       }
     }

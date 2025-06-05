@@ -129,13 +129,39 @@ The test cases cover a variety of scenarios, including:
 
 ## Evaluation Criteria
 
-The evaluation uses the following criteria:
+The evaluation framework implements the following criteria:
 
-1. **JSON Validity**: Checks if the LLM output is valid JSON
-2. **Schema Conformance**: Verifies that the output has the expected structure. This includes ensuring each item has an `item` (string) and `quantity` (number), and if an `action` field is present, it must be one of `'add'`, `'remove'`, or `'modify'`.
-3. **Item Matching**: Checks if all expected items are present (case-insensitive)
+1. **Item Presence**: Checks if expected items are found in the output
+2. **No Extra Items**: Verifies that no unexpected items are in the output
+3. **Action Matching**: Ensures that the action (add, remove, modify) matches for each item
 4. **Quantity Matching**: Verifies that quantities match for found items
-5. **Overall Accuracy**: Calculates an overall score based on correct items, wrong quantities, and extra/missing items
+5. **Measurement Accuracy**: Validates that measurements (value, unit, type) are correctly parsed and normalized
+6. **Overall Accuracy**: Calculates an overall score based on correct items, wrong quantities/measurements, and extra/missing items
+
+## Measurement Testing
+
+The evaluation framework includes comprehensive testing for measurement parsing and normalization across multiple languages and formats:
+
+### Measurement Test Cases
+
+- **Metric Units**: Tests for gram (g), kilogram (kg), milliliter (mL), and liter (L) in various formats
+- **Imperial Units**: Tests for ounce (oz), pound (lb), fluid ounce (fl oz), and cup measurements
+- **Multilingual Support**: Tests units in English, Spanish, French, German, and Italian
+- **Format Variations**: Tests decimal separators (dot/comma), fractions, and various unit formats
+- **Edge Cases**: Tests unusual formats, text between numbers and units, and prefixes
+
+### Measurement Evaluation
+
+The evaluation checks several aspects of measurement handling:
+
+1. **Unit Recognition**: Correctly identifying the measurement unit from various formats and languages
+2. **Value Parsing**: Accurately extracting the numeric value, including fractions and decimals
+3. **Type Classification**: Properly classifying measurements as weight, volume, or count
+4. **Normalization**: Converting units to their canonical form (e.g., "grammes" → "g")
+
+### Known Limitations
+
+See the [measurement limitations documentation](./.windsurf/rules/measurement-limitations.md) for details on current limitations and edge cases.
 
 ## Semantic Item Comparison
 

@@ -22,6 +22,7 @@ import {
   meetsConfidenceThreshold,
   sanitizeItemName 
 } from './semantic-comparison';
+import { Measurement } from '../../lib/types/grocery-types';
 
 /**
  * Type definitions for grocery items
@@ -41,6 +42,7 @@ export interface GroceryItem {
   item: string;
   quantity: number;
   action?: 'add' | 'remove' | 'modify';
+  measurement?: Measurement;
 }
 
 /**

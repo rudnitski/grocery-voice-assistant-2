@@ -1,7 +1,8 @@
 import GroceryItem from "./grocery-item"
+import { Measurement } from "../lib/types/grocery-types"
 
 interface GroceryListProps {
-  items: Array<{ id: string; name: string; quantity: number }>
+  items: Array<{ id: string; name: string; quantity: number; measurement?: Measurement }>
   updateQuantity: (id: string, change: number) => void
 }
 
