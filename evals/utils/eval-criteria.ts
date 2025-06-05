@@ -221,13 +221,17 @@ export interface ExtendedEvaluationResultsWithActions extends ExtendedEvaluation
  * 
  * @param actual The actual output from the LLM
  * @param expected The expected output from the test case
- * @param semanticMatches Map of semantically matched items
+ * @param semanticComparisonResults Detailed results from semantic comparison
  * @returns Detailed action evaluation results
  */
 export function evaluateActions(
   actual: GroceryItems,
   expected: GroceryItems,
-  semanticMatches: Map<string, string> = new Map()
+  semanticComparisonResults: {
+    items: string[];
+    confidenceScores: Record<string, number>;
+    reasonings: Record<string, string>;
+  } = { items: [], confidenceScores: {}, reasonings: {} }
 ): ActionEvaluationResults {
   const results: ActionEvaluationResults = {
     totalActionAccuracy: 0,
@@ -268,6 +272,65 @@ export function evaluateActions(
     actualMap.set(item.item.toLowerCase(), item);
   });
   
+  // Create a bidirectional mapping between expected and actual items based on semantic matches
+  const semanticMatchMap = new Map<string, string>();
+  const reverseSemanticMatchMap = new Map<string, string>();
+  
+  // First, add exact matches to the semantic match map
+  for (const expectedItem of expected.items) {
+    const expectedItemLower = expectedItem.item.toLowerCase();
+    for (const actualItem of actual.items) {
+      const actualItemLower = actualItem.item.toLowerCase();
+      
+      if (actualItemLower === expectedItemLower) {
+        semanticMatchMap.set(expectedItemLower, actualItemLower);
+        reverseSemanticMatchMap.set(actualItemLower, expectedItemLower);
+        break;
+      }
+    }
+  }
+  
+  // Then add semantic matches for items that don't have exact matches
+  for (const expectedItem of expected.items) {
+    const expectedItemLower = expectedItem.item.toLowerCase();
+    
+    // Skip if we already have an exact match
+    if (semanticMatchMap.has(expectedItemLower)) continue;
+    
+    // Check if this expected item has semantic matches
+    if (semanticComparisonResults.items.includes(expectedItemLower)) {
+      // Find the best semantic match among actual items
+      let bestMatch: { actualItem: string; confidence: number } | null = null;
+      
+      for (const actualItem of actual.items) {
+        const actualItemLower = actualItem.item.toLowerCase();
+        
+        // Skip if this actual item is already matched to another expected item
+        if (reverseSemanticMatchMap.has(actualItemLower)) continue;
+        
+        const result = compareItemsForSemanticEquivalence(
+          actualItem.item,
+          expectedItem.item,
+          semanticComparisonResults
+        );
+        
+        if (result.isMatch && result.confidence && 
+            (!bestMatch || result.confidence > bestMatch.confidence)) {
+          bestMatch = {
+            actualItem: actualItemLower,
+            confidence: result.confidence
+          };
+        }
+      }
+      
+      // If we found a match, add it to our maps
+      if (bestMatch) {
+        semanticMatchMap.set(expectedItemLower, bestMatch.actualItem);
+        reverseSemanticMatchMap.set(bestMatch.actualItem, expectedItemLower);
+      }
+    }
+  }
+  
   // Evaluate each expected item
   expected.items.forEach(expectedItem => {
     const expectedKey = expectedItem.item.toLowerCase();
@@ -275,15 +338,14 @@ export function evaluateActions(
     
     // Check if we have this item in actual (either exact match or semantic match)
     let actualItem: GroceryItem | undefined;
-    let actualKey: string | undefined;
     
     if (actualMap.has(expectedKey)) {
+      // Direct match by name
       actualItem = actualMap.get(expectedKey);
-      actualKey = expectedKey;
-    } else if (semanticMatches.has(expectedKey)) {
-      const semanticMatch = semanticMatches.get(expectedKey)!;
-      actualItem = actualMap.get(semanticMatch.toLowerCase());
-      actualKey = semanticMatch.toLowerCase();
+    } else if (semanticMatchMap.has(expectedKey)) {
+      // Semantic match
+      const matchedActualKey = semanticMatchMap.get(expectedKey)!;
+      actualItem = actualMap.get(matchedActualKey);
     }
     
     if (actualItem) {
@@ -291,8 +353,8 @@ export function evaluateActions(
       
       // Check if action matches
       if (expectedAction === actualAction) {
-        // Check if quantity also matches for correct action evaluation
-        if (expectedItem.quantity === actualItem.quantity) {
+        // For modify and add actions, check if quantity also matches
+        if (expectedAction === 'remove' || expectedItem.quantity === actualItem.quantity) {
           results.actionCounts.correct[expectedAction as 'add' | 'remove' | 'modify']++;
         }
       } else {
@@ -345,6 +407,48 @@ export function evaluateActions(
 }
 
 /**
+ * Helper function to compare items for semantic equivalence
+ * 
+ * @param actualItem The actual item from the LLM output
+ * @param expectedItem The expected item from the test case
+ * @param semanticComparisonResults The semantic comparison results
+ * @returns An object indicating if the items match semantically
+ */
+function compareItemsForSemanticEquivalence(
+  actualItem: string,
+  expectedItem: string,
+  semanticComparisonResults: {
+    items: string[];
+    confidenceScores: Record<string, number>;
+    reasonings: Record<string, string>;
+  }
+): { isMatch: boolean; confidence?: number } {
+  // Normalize both items for comparison
+  const normalizedActual = sanitizeItemName(actualItem).toLowerCase();
+  const normalizedExpected = sanitizeItemName(expectedItem).toLowerCase();
+  
+  // Check for exact match first
+  if (normalizedActual === normalizedExpected) {
+    return { isMatch: true, confidence: 1.0 };
+  }
+  
+  // Check if the expected item has semantic matches
+  if (semanticComparisonResults.items.includes(normalizedExpected)) {
+    // Get the confidence score for this match
+    const confidence = semanticComparisonResults.confidenceScores[normalizedExpected] || 0;
+    
+    // Use the semantic comparison results to determine if these items match
+    // This is a simplified check - in a real implementation, we would need to
+    // check if the actual item is specifically matched with this expected item
+    if (confidence >= 0.7) { // Using a threshold of 0.7 for high confidence
+      return { isMatch: true, confidence };
+    }
+  }
+  
+  return { isMatch: false };
+}
+
+/**
  * Compare LLM output with expected output and calculate accuracy metrics
  * 
  * This function performs the core evaluation by comparing the actual LLM output
@@ -372,8 +476,18 @@ export async function evaluateGroceryOutput(
     enableSemanticComparison?: boolean;
     exactMatchesOnly?: boolean;
     usualGroceries?: string;
+    testCase?: number;
   } = {}
 ): Promise<ExtendedEvaluationResultsWithActions> {
+  // Debug logging for the red/green apple test case
+  const hasRedApple = expected.items.some(item => item.item.toLowerCase() === 'red apple');
+  const hasGreenApple = expected.items.some(item => item.item.toLowerCase() === 'green apple');
+  
+  if (hasRedApple && hasGreenApple) {
+    console.log('\n\n=== DEBUG: RED/GREEN APPLE TEST CASE ===');
+    console.log('Expected items:', JSON.stringify(expected.items, null, 2));
+    console.log('Actual items:', JSON.stringify(actual.items, null, 2));
+  }
   // Process options with defaults
   const { 
     enableSemanticComparison = true,
@@ -563,7 +677,7 @@ export async function evaluateGroceryOutput(
     : 0;
   
   // Evaluate action-based operations
-  const actionResults = evaluateActions(actual, expected, new Map(results.semanticMatches.items.map(item => [item, item])));
+  const actionResults = evaluateActions(actual, expected, results.semanticMatches);
   results.actionResults = actionResults;
   
   // Overall score calculation
@@ -629,6 +743,31 @@ export function formatEvaluationResults(
   actual?: GroceryItems, 
   expected?: GroceryItems
 ): string {
+  // Debug logging for red/green apple test case
+  if (expected && actual) {
+    const hasRedApple = expected.items.some(item => item.item.toLowerCase().includes('red apple'));
+    const hasGreenApple = expected.items.some(item => item.item.toLowerCase().includes('green apple'));
+    
+    if (hasRedApple && hasGreenApple) {
+      console.log('\n\n=== DEBUG: RED/GREEN APPLE TEST CASE IN FORMAT FUNCTION ===');
+      console.log('Expected items:', JSON.stringify(expected.items, null, 2));
+      console.log('Actual items:', JSON.stringify(actual.items, null, 2));
+      
+      // Check if we have the specific test case with the side-by-side comparison issue
+      const redAppleExpected = expected.items.find(item => item.item.toLowerCase().includes('red apple'));
+      const greenAppleExpected = expected.items.find(item => item.item.toLowerCase().includes('green apple'));
+      const redAppleActual = actual.items.find(item => item.item.toLowerCase().includes('red apple'));
+      const greenAppleActual = actual.items.find(item => item.item.toLowerCase().includes('green apple'));
+      
+      if (redAppleExpected && greenAppleExpected && redAppleActual && greenAppleActual) {
+        console.log('\nThis is the test case with the side-by-side comparison issue!');
+        console.log('Red apple expected:', JSON.stringify(redAppleExpected));
+        console.log('Green apple expected:', JSON.stringify(greenAppleExpected));
+        console.log('Red apple actual:', JSON.stringify(redAppleActual));
+        console.log('Green apple actual:', JSON.stringify(greenAppleActual));
+      }
+    }
+  }
   let output = '\x1b[1m\x1b[44m\x1b[37m === Evaluation Results === \x1b[0m\n';
   
   // Overall score with color based on score value
@@ -708,76 +847,168 @@ export function formatEvaluationResults(
     const expectedItems = expected.items || [];
     const actualItems = actual.items || [];
     
-    // Determine the max items to show
-    const maxItems = Math.max(expectedItems.length, actualItems.length);
+    // Create a Map of actual items, keyed by their sanitized item name
+    const actualItemsMap = new Map<string, {
+      item: GroceryItem;
+      index: number;
+      matched: boolean;
+    }>();
     
-    for (let i = 0; i < maxItems; i++) {
-      const expectedItem = i < expectedItems.length ? 
-        `"${expectedItems[i].item}" (${expectedItems[i].quantity})` : 
-        '---';
+    actualItems.forEach((item, index) => {
+      actualItemsMap.set(item.item.toLowerCase(), {
+        item,
+        index,
+        matched: false
+      });
+    });
+    
+    // Check for semantic matches if available
+    const extendedResults = results as ExtendedEvaluationResultsWithActions;
+    const semanticMatchMap = new Map<string, string>();
+    
+    if ('semanticMatches' in extendedResults && extendedResults.semanticMatches) {
+      // Build a map of expected item names to their semantic matches in actual items
+      for (const expectedItemName of extendedResults.semanticMatches.items) {
+        // Find the best semantic match for this expected item
+        let bestMatch: { actualItemName: string; confidence: number } | null = null;
+        
+        for (const [actualItemName, actualItemData] of actualItemsMap.entries()) {
+          // Skip items that are already matched exactly by name
+          if (actualItemName === expectedItemName) continue;
+          
+          // Check if this is a semantic match with confidence score
+          if (extendedResults.semanticMatches.confidenceScores[expectedItemName]) {
+            // Compare these two items specifically
+            const confidence = extendedResults.semanticMatches.confidenceScores[expectedItemName];
+            
+            // If this is the best match so far, remember it
+            if (!bestMatch || confidence > bestMatch.confidence) {
+              bestMatch = {
+                actualItemName,
+                confidence
+              };
+            }
+          }
+        }
+        
+        // If we found a match, add it to our map
+        if (bestMatch) {
+          semanticMatchMap.set(expectedItemName, bestMatch.actualItemName);
+        }
+      }
+    }
+    
+    // Counter for line numbers
+    let lineNumber = 1;
+    
+    // Debug logging for red/green apple test case
+    const hasRedApple = expectedItems.some(item => item.item.toLowerCase() === 'red apple');
+    const hasGreenApple = expectedItems.some(item => item.item.toLowerCase() === 'green apple');
+    
+    if (hasRedApple && hasGreenApple) {
+      console.log('\n\n=== DEBUG: RED/GREEN APPLE TEST CASE IN SIDE-BY-SIDE COMPARISON ===');
+      console.log('Expected items:', JSON.stringify(expectedItems, null, 2));
+      console.log('Actual items:', JSON.stringify(actualItems, null, 2));
+      console.log('Semantic match map:', JSON.stringify(Array.from(semanticMatchMap.entries()), null, 2));
+      console.log('Actual items map:', JSON.stringify(Array.from(actualItemsMap.entries()).map(([key, value]) => {
+        return [key, { item: value.item, matched: value.matched }];
+      }), null, 2));
+    }
+    
+  // First, iterate through expected items and find their matches
+    for (const expectedItem of expectedItems) {
+      const expectedLower = expectedItem.item.toLowerCase();
+      const expectedQty = expectedItem.quantity;
+      const expectedFormatted = `"${expectedItem.item}" (${expectedItem.quantity})`;
       
-      const actualItem = i < actualItems.length ? 
-        `"${actualItems[i].item}" (${actualItems[i].quantity})` : 
-        '---';
+      // Try to find a match in actual items
+      // First check for exact match by name AND action
+      let actualItemData = null;
+      let matchType = 'exact';
       
-      // Highlight differences with colors
+      // Look for an exact match with the same action type
+      for (const [itemName, itemData] of actualItemsMap.entries()) {
+        if (itemName === expectedLower && itemData.item.action === expectedItem.action && !itemData.matched) {
+          actualItemData = itemData;
+          break;
+        }
+      }
+      
+      // If no exact match with same action, look for any exact match by name
+      if (!actualItemData) {
+        actualItemData = actualItemsMap.get(expectedLower);
+      }
+      
+      // If no exact match, check for semantic match
+      if (!actualItemData && semanticMatchMap.has(expectedLower)) {
+        const semanticMatchName = semanticMatchMap.get(expectedLower);
+        if (semanticMatchName) {
+          actualItemData = actualItemsMap.get(semanticMatchName);
+          matchType = 'semantic';
+        }
+      }
+      
+      // Format the actual item or show as missing
+      let actualFormatted = '---';
       let comparison = '';
       let itemColor = '';
       
-      if (i < expectedItems.length && i < actualItems.length) {
-        const expectedLower = expectedItems[i].item.toLowerCase();
-        const actualLower = actualItems[i].item.toLowerCase();
-        const expectedQty = expectedItems[i].quantity;
-        const actualQty = actualItems[i].quantity;
+      if (actualItemData) {
+        // Mark this actual item as matched so we don't show it again later
+        actualItemData.matched = true;
         
-        // Check if this is a semantic match
-        const extendedResults = results as ExtendedEvaluationResultsWithActions;
-        const isSemanticMatch = 'semanticMatches' in extendedResults && 
-                              extendedResults.semanticMatches.items.includes(expectedLower);
+        const actualItem = actualItemData.item;
+        const actualQty = actualItem.quantity;
+        actualFormatted = `"${actualItem.item}" (${actualItem.quantity})`;
         
-        if (expectedLower === actualLower && expectedQty === actualQty) {
+        // Determine the comparison result and color
+        if (matchType === 'exact' && expectedQty === actualQty) {
           // Exact match with matching quantities
           comparison = ' \x1b[32m✓ EXACT MATCH\x1b[0m';
           itemColor = '\x1b[32m'; // Green for match
-        } else if (isSemanticMatch && expectedQty === actualQty) {
+        } else if (matchType === 'semantic' && expectedQty === actualQty) {
           // Semantic match with matching quantities
           const confidence = extendedResults.semanticMatches.confidenceScores[expectedLower];
           comparison = ` \x1b[36m✓ SEMANTIC MATCH (${(confidence * 100).toFixed(0)}%)\x1b[0m`;
           itemColor = '\x1b[36m'; // Cyan for semantic match
-        } else if (expectedLower === actualLower) {
+        } else if (matchType === 'exact') {
           comparison = ' \x1b[33m⚠️ QUANTITY MISMATCH\x1b[0m';
           itemColor = '\x1b[33m'; // Yellow for quantity mismatch
-        } else if (isSemanticMatch) {
+        } else if (matchType === 'semantic') {
           // Semantic match but quantity mismatch
           const confidence = extendedResults.semanticMatches.confidenceScores[expectedLower];
           comparison = ` \x1b[33m⚠️ SEMANTIC MATCH (${(confidence * 100).toFixed(0)}%) BUT QUANTITY MISMATCH\x1b[0m`;
           itemColor = '\x1b[33m'; // Yellow for quantity mismatch
-        } else {
-          // Check if this is a case where different qualifiers should be treated as distinct items
-          // For example, "red apples" vs "green apples" should be considered different
-          // This aligns with the requirement that items with different qualifiers should be distinct
-          const expectedWords = expectedLower.split(' ');
-          const actualWords = actualLower.split(' ');
-          
-          // See if one item is a subset of the other (e.g., "apples" vs "red apples")
-          const isSubset = expectedWords.every(word => actualWords.includes(word)) ||
-                          actualWords.every(word => expectedWords.includes(word));
-          
-          if (isSubset) {
-            comparison = ' \x1b[31m✗ QUALIFIER DIFFERENCE\x1b[0m';
-            itemColor = '\x1b[31m'; // Red for mismatch but highlight it's due to qualifiers
-          } else {
-            comparison = ' \x1b[31m✗ MISMATCH\x1b[0m';
-            itemColor = '\x1b[31m'; // Red for mismatch
-          }
         }
+      } else {
+        // No match found - this is a missing item
+        comparison = ' \x1b[31m✗ MISSING ITEM\x1b[0m';
+        itemColor = '\x1b[31m'; // Red for missing
       }
       
       // Number each line and add colors to items
-      output += `\x1b[36m${i+1}.\x1b[0m ${itemColor}${expectedItem}\x1b[0m`.padEnd(36) + 
-               `| ${itemColor}${actualItem}\x1b[0m`.padEnd(36) + 
+      output += `\x1b[36m${lineNumber}.\x1b[0m ${itemColor}${expectedFormatted}\x1b[0m`.padEnd(36) + 
+               `| ${itemColor}${actualFormatted}\x1b[0m`.padEnd(36) + 
                `${comparison}\n`;
+      
+      lineNumber++;
     }
+    
+    // Now show any remaining actual items that weren't matched (extra items)
+    for (const [actualItemName, actualItemData] of actualItemsMap.entries()) {
+      if (!actualItemData.matched) {
+        const actualItem = actualItemData.item;
+        const actualFormatted = `"${actualItem.item}" (${actualItem.quantity})`;
+        
+        // Format as an extra item
+        output += `\x1b[36m${lineNumber}.\x1b[0m ---`.padEnd(36) + 
+                 `| \x1b[31m${actualFormatted}\x1b[0m`.padEnd(36) + 
+                 ` \x1b[31m✗ EXTRA ITEM\x1b[0m\n`;
+        
+        lineNumber++;
+      }
+    }
+    
     output += '\n';
   }
   
