@@ -3,6 +3,9 @@
 import type React from "react"
 import { useState, useRef, useEffect } from "react"
 import { Mic, Square, Loader2 } from "lucide-react"
+import ExportDialog from "./export-dialog"
+import { formatGroceryListForExport } from "@/lib/utils/grocery-utils"
+import { toast } from "@/hooks/use-toast"
 import TranscriptPanel from "./transcript-panel"
 import GroceryList from "./grocery-list"
 import UsualGroceries from "./usual-groceries"
@@ -55,7 +58,9 @@ export default function VoiceRecorder() {
   const [transcript, setTranscript] = useState("") // Stores the last successfully processed transcript (voice or manual)
   const [manualTranscript, setManualTranscript] = useState("") // Live text in the editable textarea for manual input/editing
   const [interimTranscript, setInterimTranscript] = useState("")
-  const [groceryItems, setGroceryItems] = useState<Array<{ id: string; name: string; quantity: number; measurement?: Measurement }>>([])  
+  const [groceryItems, setGroceryItems] = useState<Array<{ id: string; name: string; quantity: number; measurement?: Measurement }>>([])
+  const [isExportDialogOpen, setIsExportDialogOpen] = useState(false)
+  const [exportText, setExportText] = useState("")  
   const [useMockData, setUseMockData] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [usualGroceries, setUsualGroceries] = useState("")
@@ -205,6 +210,21 @@ export default function VoiceRecorder() {
     if (!manualTranscript.trim()) return; // Do nothing if textarea is empty
     setTranscript(manualTranscript); // Update main transcript to reflect what's being processed
     await _processTextInternal(manualTranscript);
+  };
+
+  // Export grocery list handler
+  const handleExportList = async () => {
+    if (groceryItems.length === 0) return;
+    const formatted = formatGroceryListForExport(
+      groceryItems.map(({ name, quantity, measurement }) => ({ item: name, quantity, measurement })) as any
+    );
+    try {
+      await navigator.clipboard.writeText(formatted);
+      toast({ title: "Copied!", description: "Grocery list copied to clipboard." });
+    } catch (err) {
+      setExportText(formatted);
+      setIsExportDialogOpen(true);
+    }
   };
 
   // Handler for when usual groceries change
@@ -675,7 +695,7 @@ export default function VoiceRecorder() {
           )}
         </div>
         
-        <GroceryList items={groceryItems} updateQuantity={updateItemQuantity} />
+        <GroceryList items={groceryItems} updateQuantity={updateItemQuantity} onExport={handleExportList} />
       </div>
       
       {/* Raw JSON Response Section */}
@@ -691,6 +711,13 @@ export default function VoiceRecorder() {
         </Card>
       )}
       
+      {/* Export fallback dialog */}
+      <ExportDialog
+        isOpen={isExportDialogOpen}
+        onClose={() => setIsExportDialogOpen(false)}
+        textToCopy={exportText}
+      />
+
       {/* Usual groceries textarea */}
       <UsualGroceries onUsualGroceriesChange={handleUsualGroceriesChange} />
     </div>

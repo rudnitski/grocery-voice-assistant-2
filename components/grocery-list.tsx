@@ -1,15 +1,29 @@
 import GroceryItem from "./grocery-item"
 import { Measurement } from "../lib/types/grocery-types"
+import { Copy } from "lucide-react"
+import { Button } from "./ui/button"
 
 interface GroceryListProps {
   items: Array<{ id: string; name: string; quantity: number; measurement?: Measurement }>
   updateQuantity: (id: string, change: number) => void
+  onExport: () => void
 }
 
-export default function GroceryList({ items, updateQuantity }: GroceryListProps) {
+export default function GroceryList({ items, updateQuantity, onExport }: GroceryListProps) {
   return (
     <div className="flex flex-col h-full">
-      <h2 className="text-xl font-semibold mb-4 px-1">Grocery List</h2>
+      <div className="flex items-center justify-between mb-4 px-1">
+        <h2 className="text-xl font-semibold">Grocery List</h2>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => { console.log('[DEBUG] Export button clicked'); onExport(); }}
+          disabled={items.length === 0}
+          aria-label="Export grocery list"
+        >
+          <Copy className="size-4" />
+        </Button>
+      </div>
       <div className="bg-gray-900/50 backdrop-blur-sm rounded-3xl p-6 shadow-xl border border-gray-800 min-h-[250px] flex-grow">
         {items.length > 0 ? (
           <ul className="space-y-4">
